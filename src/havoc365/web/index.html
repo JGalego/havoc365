@@ -16,10 +16,11 @@
         <summary aria-label="Room information" title="Room information"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v1"/></svg></summary>
         <div class="info-popover">
           <h2>About this room</h2>
-          <p>No Microsoft sign-in. Reloading or leaving signs you out.</p>
-          <p>Names are self-reported. Verify urgent requests through a known contact.</p>
+          <p>No Microsoft sign-in. Your session survives reloads until it expires, is revoked, or you sign out. Sign out on shared devices.</p>
+          <p>Personal-invite names are admin-assigned, not identity verification. Shared-code names are self-reported. Verify urgent requests through a known contact.</p>
           <p>The watcher or incident lead opens chat. An open room can be a drill.</p>
-          <p>Showing the newest 200 messages. Ctrl/Cmd+Enter sends a check-in.</p>
+          <p>Check-ins aren't rescue dispatch or read receipts. Showing the newest 200 messages. Ctrl/Cmd+Enter sends a message.</p>
+          <p>Admin recovery uses the independently held lifeboat admin secret, not Microsoft.</p>
         </div>
       </details>
     </header>
@@ -28,27 +29,34 @@
         <form id="join" class="join-card">
           <img class="lifebuoy welcome-buoy" src="/lifebuoy.png" width="144" height="144" alt="">
           <h1 id="welcome-title">Lifeboat</h1>
-          <label for="token">Member token</label>
+          <label for="token">Access code</label>
           <div class="token-field">
-            <input id="token" type="password" required autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="token-help" placeholder="Paste your member token">
-            <button id="show-token" class="button-subtle" type="button" aria-label="Show member token" aria-pressed="false">Show</button>
+            <input id="token" type="password" required autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="token-help" placeholder="Paste your access code">
+            <button id="show-token" class="button-subtle" type="button" aria-label="Show access code" aria-pressed="false">Show</button>
           </div>
           <p id="error" class="notice-error" role="alert"></p>
           <button id="join-submit" class="button-primary" type="submit">Join room</button>
-          <details class="join-help"><summary>Need a token?</summary><p id="token-help">Ask your incident lead for the member token. Not your Microsoft password.</p></details>
+          <details class="join-help"><summary>Need a code?</summary><p id="token-help">Ask your incident lead for a personal invitation. Not your Microsoft password.</p></details>
         </form>
       </section>
       <section id="workspace" aria-label="Incident room" hidden>
         <div class="room-heading">
           <div class="room-state"><h1 id="room-title" tabindex="-1">Lifeboat</h1><span id="status" class="status-badge" role="status">Connecting</span></div>
-          <button id="leave" class="button-subtle" type="button">Leave room</button>
+          <button id="leave" class="button-subtle" type="button">Sign out</button>
         </div>
+        <p id="account-feedback" class="notice-error" role="alert"></p>
+        <section id="incident-banner" class="incident-banner" aria-labelledby="incident-title" hidden>
+          <h2 id="incident-title"></h2>
+          <p id="incident-update"></p>
+          <p id="incident-meta" class="field-help"></p>
+        </section>
         <div id="connection-banner" class="connection-banner" role="status" hidden>
           <div><p id="connection"></p><details class="connection-details"><summary>Details</summary><p id="connection-reason"></p></details></div><button id="retry" class="button-subtle" type="button">Retry now</button>
         </div>
         <div class="room-tabs" role="tablist" aria-label="Room view">
           <button id="tab-chat" type="button" role="tab" aria-selected="true" aria-controls="room-main">Chat</button>
           <button id="tab-contacts" type="button" role="tab" aria-selected="false" aria-controls="contacts-panel" tabindex="-1">Contacts</button>
+          <button id="tab-admin" type="button" role="tab" aria-selected="false" aria-controls="admin-panel" tabindex="-1" hidden>Admin</button>
         </div>
         <div class="room-grid">
           <div id="room-main" class="room-main" role="tabpanel" aria-labelledby="tab-chat">
@@ -60,17 +68,44 @@
               <button id="find-contact" class="button-primary" type="button">Find a contact</button>
             </section>
             <section id="chat" class="card chat-panel" aria-labelledby="chat-title" hidden>
-              <header class="panel-heading"><div class="chat-heading"><h2 id="chat-title">Chat</h2><span class="field-help">Names unverified</span></div><span id="message-count" class="count">0</span></header>
-              <div id="chat-empty" class="chat-empty"><p>No check-ins yet.</p></div>
+              <header class="panel-heading"><div class="chat-heading"><h2 id="chat-title">Chat</h2><span id="identity" class="field-help"></span></div><span id="message-count" class="count">0</span></header>
+              <div id="chat-empty" class="chat-empty"><p>No messages yet.</p></div>
               <ol id="messages" role="log" aria-label="Incident messages" aria-live="polite" aria-relevant="additions" tabindex="0"></ol>
               <button id="jump-latest" class="button-subtle jump-latest" type="button" hidden>Jump to latest</button>
               <form id="send" class="composer">
-                <label for="author" class="sr-only">Your name</label><input id="author" maxlength="80" required autocomplete="nickname" placeholder="Your name">
-                <label for="message" class="sr-only">Your check-in</label><textarea id="message" maxlength="2000" required rows="3" aria-describedby="message-hint message-counter" placeholder="Write a check-in..."></textarea>
+                <label id="author-label" for="author" class="sr-only">Your name (unverified)</label><input id="author" maxlength="80" required autocomplete="nickname" placeholder="Your name (unverified)">
+                <label for="message" class="sr-only">Your message</label><textarea id="message" maxlength="2000" required rows="3" aria-describedby="message-hint message-counter" placeholder="Write a message..."></textarea>
                 <p id="message-hint" class="sr-only">Ctrl/Cmd+Enter to send. Enter for a new line.</p>
-                <div class="composer-bottom"><span id="message-counter" class="field-help" hidden>0 / 2000</span><button id="send-submit" class="button-primary" type="submit" title="Send check-in (Ctrl/Cmd+Enter)">Send</button></div>
+                <div id="attachment-picker" class="attachment-picker" hidden>
+                  <label for="attachments">Attach files</label>
+                  <input id="attachments" type="file" multiple aria-describedby="attachment-hint">
+                  <div class="attachment-help">
+                    <p id="attachment-hint" class="field-help">5 files · 25 MiB each</p>
+                    <details id="attachment-details" class="field-help">
+                      <summary>File safety</summary>
+                      <p>Unsent uploads are private to you and admins; they expire after 24 hours. Files aren't malware-scanned; open only those you trust.</p>
+                    </details>
+                  </div>
+                  <ul id="draft-attachments" class="draft-attachments" aria-label="Draft attachments" aria-live="polite" aria-relevant="additions text"></ul>
+                  <p id="attachment-feedback" class="field-help" role="status"></p>
+                </div>
+                <div class="composer-bottom"><span id="message-counter" class="field-help" hidden>0 / 2000</span><button id="send-submit" class="button-primary" type="submit" title="Send message (Ctrl/Cmd+Enter)">Send</button></div>
                 <p id="send-feedback" role="status"></p>
               </form>
+            </section>
+            <section id="checkin-panel" class="card checkin-panel" aria-labelledby="checkin-title">
+              <header class="panel-heading"><h2 id="checkin-title">Named check-ins</h2><span id="checkin-count" class="count">0</span></header>
+              <p class="field-help">This incident only. Not rescue dispatch or read receipts.</p>
+              <p id="checkin-help" class="field-help" hidden>A personal invitation is needed to check in. Ask your incident lead.</p>
+              <form id="checkin-form">
+                <div class="checkin-fields">
+                  <div><label for="checkin-status">Your status</label><select id="checkin-status"><option value="safe">I'm safe</option><option value="help">I need help</option></select></div>
+                  <div><label for="checkin-note">Note (optional)</label><input id="checkin-note" maxlength="500" autocomplete="off"></div>
+                </div>
+                <button id="checkin-submit" class="button-subtle" type="submit">Save check-in</button>
+              </form>
+              <p id="checkin-feedback" class="field-help" role="status"></p>
+              <ul id="checkins" class="record-list"></ul>
             </section>
           </div>
           <aside id="contacts-panel" class="card contact-panel" role="tabpanel" aria-labelledby="tab-contacts">
@@ -78,7 +113,77 @@
             <label for="contact-search" class="sr-only">Search contacts</label><input id="contact-search" type="search" placeholder="Search contacts" autocomplete="off">
             <ul id="contacts"></ul>
             <p id="contact-feedback" class="field-help" role="status"></p>
+            <details class="offline-card">
+              <summary>Download contacts offline</summary>
+              <p class="field-help">Saves names and contact details on this device. No messages or access codes. Keep the file private; delete it when no longer needed.</p>
+              <label for="offline-format">File format</label>
+              <select id="offline-format"><option value="html">HTML (opens in a browser)</option><option value="json">JSON</option><option value="txt">Text</option></select>
+              <button id="download-contacts" class="button-subtle" type="button">Download contacts</button>
+            </details>
           </aside>
+          <section id="admin-panel" class="admin-panel" role="tabpanel" aria-labelledby="tab-admin" hidden>
+            <h2>Administration</h2>
+            <p id="admin-feedback" class="notice-error" role="alert"></p>
+            <p id="admin-load-feedback" class="notice-error" role="status"></p>
+            <button id="admin-retry" class="button-subtle" type="button" hidden>Reload administration</button>
+            <div class="admin-grid">
+              <form id="incident-form" class="card admin-card">
+                <h3>Incident</h3>
+                <label for="incident-mode">Room control</label>
+                <select id="incident-mode"><option value="auto">Auto — watcher controls chat</option><option value="open">Open — hold chat open</option><option value="standby">Standby — close chat</option></select>
+                <label for="edit-title">Title</label><input id="edit-title" maxlength="200">
+                <label for="edit-update">Update</label><textarea id="edit-update" rows="2" maxlength="2000"></textarea>
+                <label for="edit-lead">Incident lead</label><input id="edit-lead" maxlength="200">
+                <label for="edit-next">Next update</label><input id="edit-next" maxlength="200" placeholder="e.g. 15:30 UTC">
+                <button id="incident-save" class="button-primary" type="submit">Save incident</button>
+                <p id="incident-feedback" class="field-help" role="status"></p>
+              </form>
+              <div class="card admin-card">
+                <form id="invite-form">
+                  <h3>Invite a person</h3>
+                  <p class="field-help">Keep two enrolled admins. Share invitations through an independent channel; nothing is sent automatically.</p>
+                  <label for="invite-name">Person's name</label><input id="invite-name" maxlength="80" required autocomplete="off">
+                  <div class="checkin-fields">
+                    <div><label for="invite-role">Role</label><select id="invite-role"><option value="member">Member</option><option value="admin">Admin</option></select></div>
+                    <div><label for="invite-hours">Expires in hours</label><input id="invite-hours" type="number" min="1" max="720" value="48" required></div>
+                  </div>
+                  <button id="invite-create" class="button-primary" type="submit">Create invitation</button>
+                  <p id="invite-feedback" class="field-help" role="status"></p>
+                </form>
+                <section id="new-invite" class="new-invite" aria-labelledby="new-invite-title" hidden>
+                  <h3 id="new-invite-title">Invitation created</h3>
+                  <p id="new-invite-expiry" class="field-help"></p>
+                  <p class="field-help">Shown only now. Copy before leaving this page.</p>
+                  <label for="invite-link">Invitation link</label><input id="invite-link" readonly autocomplete="off">
+                  <button id="copy-invite-link" class="button-subtle" type="button">Copy link</button>
+                  <label for="invite-code">Invitation access code</label><input id="invite-code" readonly autocomplete="off" spellcheck="false">
+                  <button id="copy-invite-code" class="button-subtle" type="button">Copy code</button>
+                  <button id="dismiss-invite" class="button-subtle" type="button">Dismiss code</button>
+                  <p id="invite-copy-feedback" class="field-help" role="status"></p>
+                </section>
+              </div>
+              <form id="contacts-form" class="card admin-card">
+                <h3>Edit contacts</h3>
+                <div id="contact-rows"></div>
+                <div class="button-row"><button id="contact-add" class="button-subtle" type="button">Add contact</button><button id="contacts-save" class="button-primary" type="submit">Save contacts</button></div>
+                <p id="contacts-edit-feedback" class="field-help" role="status"></p>
+              </form>
+              <section class="card admin-card" aria-labelledby="people-title">
+                <header class="panel-heading"><h3 id="people-title">People</h3><span id="people-count" class="count">0</span></header>
+                <p class="field-help">Check-in status is for the current incident.</p>
+                <ul id="people" class="record-list"></ul>
+              </section>
+              <section class="card admin-card" aria-labelledby="invites-title">
+                <h3 id="invites-title">Invitations</h3>
+                <ul id="invites" class="record-list"></ul>
+              </section>
+              <section class="card admin-card" aria-labelledby="audit-title">
+                <header class="panel-heading"><h3 id="audit-title">Audit</h3><button id="export-incident" class="button-subtle" type="button">Export incident JSON</button></header>
+                <p class="field-help">Export includes messages, roster and audit. Keep it private.</p>
+                <ul id="audit" class="record-list"></ul>
+              </section>
+            </div>
+          </section>
         </div>
         <p id="last-updated" class="room-footnote">Connecting.</p>
       </section>
