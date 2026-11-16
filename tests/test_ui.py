@@ -54,7 +54,7 @@ def test_redirected_output_stays_plain_and_complete(capsys):
 def test_explorer_displays_all_details_and_treats_names_as_literal(monkeypatch):
     ui, stream = terminal_ui()
     choices = iter(["bad", "1", "2", "l", "q"])
-    monkeypatch.setattr(ui.console, "input", lambda _: next(choices))
+    monkeypatch.setattr(ui.console, "input", lambda _, **kwargs: next(choices))
     ui.explore(example_report())
     output = stream.getvalue()
     assert "Choose a listed number" in output
@@ -68,11 +68,18 @@ def test_explorer_displays_all_details_and_treats_names_as_literal(monkeypatch):
 def test_explorer_exits_cleanly_on_closed_input(monkeypatch):
     ui, _ = terminal_ui()
 
-    def eof(_):
+    def eof(_, **kwargs):
         raise EOFError
 
     monkeypatch.setattr(ui.console, "input", eof)
     ui.explore(example_report())
+
+
+def test_explorer_displays_default_quit_key(monkeypatch):
+    ui, stream = terminal_ui()
+    monkeypatch.setattr("sys.stdin", StringIO("q\n"))
+    ui.explore(example_report())
+    assert "View [q]:" in re.sub(r"\x1b\[[0-9;]*m", "", stream.getvalue())
 
 
 def test_no_color_environment_is_respected(monkeypatch):

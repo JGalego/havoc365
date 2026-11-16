@@ -81,7 +81,7 @@ class UI:
                 Text("\nInspect: " + menu + "  |  l limits  |  q quit", style="cyan")
             )
             try:
-                choice = self.console.input("View [q]: ").strip().lower()
+                choice = self.console.input("View [q]: ", markup=False).strip().lower()
             except EOFError:
                 return
             if choice in {"", "q", "quit"}:

@@ -25,6 +25,13 @@ If your monitoring sends alerts through Exchange, those alerts may be waiting in
 
 havoc365 maps these dependencies in your tenant and runs outage drills with a small group of volunteers.
 
+<picture>
+  <source media="(prefers-reduced-motion: reduce)" srcset="assets/map.png">
+  <img src="assets/map.gif" alt="Offline map demo: inspect SharePoint dependencies and coverage limits." width="900">
+</picture>
+
+*Offline demo using Microsoft Learn examples, not a live tenant. Domains are omitted; no DNS queries are made.*
+
 ## Getting Started
 
 You need [uv](https://docs.astral.sh/uv/) and a Microsoft 365 account with the Global Reader role. Drills require the additional roles listed under [Permissions](#permissions).
@@ -148,6 +155,10 @@ HAVOC365_TEST_TENANT=<test-tenant-id> uv run pytest -m live
 ```
 
 No live test starts a drill. Do not run drills against production.
+
+To try the recorded interaction without credentials, run `uv run python assets/demo.py`. It runs the real `map` command with selected [published responses](tests/fixtures/sources.json), blocks network connections and omits domains because the examples contain no DNS responses. It writes the report in your current directory.
+
+Regenerate the animation and reduced-motion still with `uv run assets/record_map.py`. Run it from the repository root with [VHS](https://github.com/charmbracelet/vhs), `ffmpeg`, `ttyd`, Chromium and the Noto Sans Mono font available. The script preserves readable pauses even when headless capture drops unchanged frames.
 
 ## License
 
