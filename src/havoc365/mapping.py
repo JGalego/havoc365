@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
 
@@ -9,6 +10,30 @@ from havoc365.graph import NO_PREMIUM, Graph
 from havoc365.storage import JsonObject
 
 GRAPH_APP_ID = "00000003-0000-0000-c000-000000000000"
+
+
+@dataclass(frozen=True)
+class Finding:
+    summary: str
+    details: tuple[str, ...] = ()
+    skipped: bool = False
+
+
+@dataclass(frozen=True)
+class MapReport:
+    tenant: str
+    sections: dict[str, tuple[Finding, ...]]
+    notes: tuple[str, ...]
+
+    def plain(self) -> str:
+        lines = [self.tenant]
+        for service, findings in self.sections.items():
+            lines.extend(("", f"If {service} goes down"))
+            for finding in findings:
+                details = f"   {_names(list(finding.details))}" if finding.details else ""
+                lines.append(f"  {finding.summary}{details}")
+        lines.extend(("", "Limits and skipped checks", *(f"  - {note}" for note in self.notes)))
+        return "\n".join(lines)
 
 
 def mx_hosts(domain: str) -> list[str]:
@@ -75,7 +100,7 @@ def _names(items: list[str]) -> str:
     return ", ".join(labels[:3]) + (f", +{len(labels) - 3}" if len(labels) > 3 else "")
 
 
-def map_tenant(graph: Graph, tenant: str) -> str:
+def map_tenant(graph: Graph, tenant: str) -> MapReport:
     domains = list(graph.collection("domains"))
     principals = list(
         graph.collection(
@@ -104,13 +129,13 @@ def map_tenant(graph: Graph, tenant: str) -> str:
                 smtp.add(
                     event.get("userPrincipalName") or event.get("appDisplayName") or event["id"]
                 )
-        smtp_line = f"  {len(smtp)} identities used SMTP AUTH"
-        if smtp:
-            smtp_line += f"   {_names(list(smtp))}"
+        smtp_finding = Finding(f"{len(smtp)} identities used SMTP AUTH", tuple(sorted(smtp)))
     except GraphError as error:
         if error.code != NO_PREMIUM:
             raise
-        smtp_line = "  SKIPPED: SMTP AUTH observations (sign-in logs unavailable)"
+        smtp_finding = Finding(
+            "SKIPPED: SMTP AUTH observations (sign-in logs unavailable)", skipped=True
+        )
         notes.append(
             f"Graph returned {NO_PREMIUM}. Check Entra ID P1/P2 licensing; "
             "SMTP sign-in checks were skipped, not passed."
@@ -152,11 +177,14 @@ def map_tenant(graph: Graph, tenant: str) -> str:
         for item in principals
         if item.get("accountEnabled") and item.get("servicePrincipalType") == "Application"
     ]
-    lines = [tenant, "", "If Exchange Online goes down", smtp_line]
+    exchange = [smtp_finding]
     if mail_ids:
-        lines.append(
-            f"  {len(mail_apps)} apps request Microsoft Graph Mail.Send"
-            + (f"   {_names(mail_apps)}" if mail_apps else "")
+        exchange.append(
+            Finding(f"{len(mail_apps)} apps request Microsoft Graph Mail.Send", tuple(mail_apps))
+        )
+    else:
+        exchange.append(
+            Finding("SKIPPED: Mail.Send permission definitions unavailable", skipped=True)
         )
     for domain in domains:
         if domain.get("isVerified") and "Email" in domain.get("supportedServices", []):
@@ -164,20 +192,24 @@ def map_tenant(graph: Graph, tenant: str) -> str:
             hosts = mx_hosts(name)
             direct = [host for host in hosts if host.endswith(".mail.protection.outlook.com")]
             if direct:
-                lines.append(f"  {name} has an MX route straight to Exchange   {', '.join(direct)}")
+                exchange.append(
+                    Finding(f"{name} has an MX route straight to Exchange", tuple(direct))
+                )
             elif not hosts:
                 notes.append(f"{name} has no MX records.")
-    lines += [
-        "",
-        "If SharePoint goes down",
-        f"  {len(files)} runbook search matches in SharePoint"
-        + (f"   {_names([item['name'] for item in files])}" if files else ""),
-        "",
-        "If Entra ID sign-in goes down",
-        f"  {len(entra)} enabled enterprise apps use Entra ID"
-        + (f"   {_names(entra)}" if entra else ""),
-        "",
-        "Limits and skipped checks",
-        *(f"  - {note}" for note in notes),
-    ]
-    return "\n".join(lines)
+    return MapReport(
+        tenant,
+        {
+            "Exchange Online": tuple(exchange),
+            "SharePoint": (
+                Finding(
+                    f"{len(files)} runbook search matches in SharePoint",
+                    tuple(f"{item['name']}  {item['webUrl']}" for item in files),
+                ),
+            ),
+            "Entra ID sign-in": (
+                Finding(f"{len(entra)} enabled enterprise apps use Entra ID", tuple(entra)),
+            ),
+        },
+        tuple(notes),
+    )

@@ -46,7 +46,7 @@ def test_map_uses_sourced_data_and_reports_limits(fixture, monkeypatch):
         "havoc365.mapping.mx_hosts", lambda _: ["contoso-com.mail.protection.outlook.com"]
     )
     graph = MappingGraph(fixture)
-    output = map_tenant(graph, "contoso.com")
+    output = map_tenant(graph, "contoso.com").plain()
     assert "contoso.com has an MX route straight to Exchange" in output
     assert "1 runbook search matches in SharePoint" in output
     assert "1 enabled enterprise apps use Entra ID" in output
@@ -62,7 +62,7 @@ def test_map_skips_only_documented_premium_license_error(fixture, monkeypatch):
     output = map_tenant(
         MappingGraph(fixture, GraphError(403, NO_PREMIUM, "Tenant doesn't have premium license")),
         "contoso.com",
-    )
+    ).plain()
     assert "SKIPPED: SMTP AUTH" in output
     assert "skipped, not passed" in output
     with pytest.raises(GraphError, match="admin consent"):

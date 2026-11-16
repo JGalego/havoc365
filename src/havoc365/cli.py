@@ -9,6 +9,7 @@ from havoc365.errors import HavocError
 from havoc365.graph import Graph
 from havoc365.mapping import map_tenant
 from havoc365.storage import state_dir, write_private
+from havoc365.ui import UI
 
 
 def parser() -> argparse.ArgumentParser:
@@ -18,7 +19,10 @@ def parser() -> argparse.ArgumentParser:
     login = commands.add_parser("login", help="Sign in with a device code")
     login.add_argument("--tenant", required=True)
     login.add_argument("--client-id", required=True)
-    commands.add_parser("map", help="Map tenant dependencies")
+    mapping = commands.add_parser("map", help="Map tenant dependencies")
+    mapping.add_argument(
+        "--no-interactive", action="store_true", help="Show the map without the terminal explorer"
+    )
     drill = commands.add_parser("drill", help="Plan, run, revert or report an outage drill")
     drills = drill.add_subparsers(dest="action", required=True)
     for name in ("plan", "run"):
@@ -36,14 +40,15 @@ def _interrupt(signum: int, frame: object) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
+    ui = UI()
     graph: Graph | None = None
     previous_handler = None
     try:
         directory = state_dir()
         auth = Auth(directory)
         if args.command == "login":
-            auth.login(args.tenant, args.client_id, print)
-            print(f"Signed in to {auth.profile['tenant']}.")
+            auth.login(args.tenant, args.client_id, ui.message)
+            ui.message(f"Signed in to {auth.profile['tenant']}.")
             return 0
         drill = args.command == "drill"
         token = auth.token(drill)
@@ -54,17 +59,24 @@ def main(argv: list[str] | None = None) -> int:
 
         graph = Graph(access_token)
         if args.command == "map":
-            output = map_tenant(graph, auth.profile["tenant"])
+            with ui.working("Reading tenant dependencies (Graph + DNS)..."):
+                result = map_tenant(graph, auth.profile["tenant"])
+            output = result.plain()
             write_private(
                 Path("blast-radius.md"), "# Tenant dependencies\n\n```text\n" + output + "\n```\n"
             )
-            print(output)
-            print("\nReport written to blast-radius.md")
+            ui.show_map(result)
+            ui.message("\nReport written to blast-radius.md")
+            if ui.interactive and not args.no_interactive:
+                ui.explore(result)
         elif args.action in {"plan", "run"}:
-            pilot = plan(graph, args.group, args.duration, auth.profile["oid"])
-            print(pilot.describe())
+            with ui.working("Checking pilot membership and admin roles..."):
+                pilot = plan(graph, args.group, args.duration, auth.profile["oid"])
+            ui.show_pilot(pilot)
             if args.action == "run":
-                print("This blocks real access and revokes sessions. Tell the volunteers first.")
+                ui.message(
+                    "This blocks real access and revokes sessions. Tell the volunteers first."
+                )
                 try:
                     confirmation = input(f"Type the group name ({pilot.name}) to start: ")
                 except EOFError as error:
@@ -75,18 +87,21 @@ def main(argv: list[str] | None = None) -> int:
                 if current != pilot:
                     raise HavocError("The pilot changed during confirmation. Run drill plan again.")
                 previous_handler = signal.signal(signal.SIGTERM, _interrupt)
-                run(graph, pilot, directory, auth.profile["tid"])
+                run(graph, pilot, directory, auth.profile["tid"], announce=ui.message)
         elif args.action == "revert":
-            removed = revert(graph)
+            with ui.working("Finding and removing drill policies..."):
+                removed = revert(graph)
             for name in removed:
-                print(f"Removed {name}.")
+                ui.message(f"Removed {name}.")
             if not removed:
-                print("No havoc365 drill policies found in this tenant.")
+                ui.message("No havoc365 drill policies found in this tenant.")
         elif args.action == "report":
-            print(report(graph, directory, auth.profile["tid"]))
+            with ui.working("Reading sign-in attempts..."):
+                result_text = report(graph, directory, auth.profile["tid"])
+            ui.show_report(result_text)
         return 0
     except (HavocError, OSError) as error:
-        print(f"Error: {error}", file=sys.stderr)
+        ui.error(str(error))
         return 1
     except KeyboardInterrupt:
         print("Interrupted. If cleanup did not finish, run havoc365 drill revert.", file=sys.stderr)
