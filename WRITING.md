@@ -9,4 +9,5 @@ Write as if you're explaining the project to a colleague who has work to do.
 - Say what's available, what's planned and what can go wrong. Name the limits and recovery steps rather than promising safety.
 - Let sentences vary in length. Contractions are fine. Don't force punchlines, dramatic fragments, neat groups of three or repeated "not X, but Y" contrasts.
 - Use paragraphs for explanations, lists for steps and tables for comparisons. Don't give every thought its own heading.
+- Keep each paragraph or list item on one source line. Let the editor wrap prose; preserve code, tables and diagrams as written.
 - Read it aloud once. If you wouldn't say it to a colleague, rewrite it. If cutting it loses no meaning, cut it.
