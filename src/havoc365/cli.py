@@ -7,10 +7,11 @@ from pathlib import Path
 import httpx
 
 from havoc365.auth import Auth
+from havoc365.deployment import configure_parser, run_deployment
 from havoc365.drills import plan, report, revert, run
 from havoc365.errors import HavocError
 from havoc365.graph import Graph
-from havoc365.lifeboat import serve, set_active
+from havoc365.lifeboat import backup, restore, serve, set_active, set_automatic
 from havoc365.mapping import MapReport, map_tenant
 from havoc365.storage import state_dir, write_private
 from havoc365.ui import UI
@@ -73,6 +74,11 @@ def parser() -> argparse.ArgumentParser:
     monitor.add_argument(
         "--lifeboat-url", help="HTTPS lifeboat to activate (loopback HTTP allowed for local tests)"
     )
+    monitor.add_argument(
+        "--invite-roster",
+        type=Path,
+        help="Private name/phone roster for paid outage invitations (requires --sms)",
+    )
     lifeboat = commands.add_parser(
         "lifeboat", help="Run or activate independent fallback chat and contacts"
     )
@@ -80,13 +86,21 @@ def parser() -> argparse.ArgumentParser:
     server = boats.add_parser("serve")
     server.add_argument("--port", type=int, default=8080)
     server.add_argument("--contacts", type=Path, help="Local contact JSON file to import")
-    for action in ("activate", "standby"):
+    for action in ("activate", "standby", "auto"):
         command = boats.add_parser(action)
         command.add_argument(
             "--url",
             required=True,
             help="HTTPS lifeboat origin (loopback HTTP allowed for local tests)",
         )
+    archive = boats.add_parser("backup", help="Create a consistent private SQLite backup")
+    archive.add_argument("--output", type=Path, required=True)
+    recover = boats.add_parser("restore", help="Restore a backup while the server is stopped")
+    recover.add_argument("--backup", type=Path, required=True)
+    recover.add_argument(
+        "--replace", action="store_true", help="Replace an existing stopped database"
+    )
+    configure_parser(boats)
     return root
 
 
@@ -112,17 +126,33 @@ def main(argv: list[str] | None = None) -> int:
     previous_handler = None
     try:
         if args.command == "lifeboat":
-            if args.action == "serve":
+            if args.action == "deploy":
+                run_deployment(args)
+            elif args.action == "serve":
                 serve(state_dir(), args.port, args.contacts)
+            elif args.action == "backup":
+                backup(state_dir(), args.output)
+                ui.message(f"Lifeboat backup written to {args.output}. Keep it private.")
+            elif args.action == "restore":
+                restore(state_dir(), args.backup, replace=args.replace)
+                ui.message(
+                    "Lifeboat restored. Start the service and check readiness before sharing it."
+                )
             else:
                 with httpx.Client(timeout=10) as client:
-                    set_active(
-                        client,
-                        args.url,
-                        os.environ.get("HAVOC365_LIFEBOAT_ADMIN_TOKEN", ""),
-                        args.action == "activate",
-                    )
-                ui.message(f"Lifeboat is {'open' if args.action == 'activate' else 'on standby'}.")
+                    token = os.environ.get("HAVOC365_LIFEBOAT_ADMIN_TOKEN", "")
+                    if args.action == "auto":
+                        set_automatic(client, args.url, token)
+                    else:
+                        set_active(client, args.url, token, args.action == "activate")
+                state = (
+                    "under automatic control"
+                    if args.action == "auto"
+                    else "open"
+                    if args.action == "activate"
+                    else "on standby"
+                )
+                ui.message(f"Lifeboat is {state}.")
             return 0
         if args.command == "watch":
             return watch(
@@ -134,6 +164,7 @@ def main(argv: list[str] | None = None) -> int:
                 once=args.once,
                 sms=args.sms,
                 lifeboat_url=args.lifeboat_url,
+                invite_roster_path=args.invite_roster,
                 announce=ui.message,
             )
         if args.command == "map" and args.exports_only:

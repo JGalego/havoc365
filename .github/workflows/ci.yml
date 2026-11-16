@@ -57,8 +57,12 @@ jobs:
       - name: Smoke-test installed wheel
         run: |
           uv run --isolated --no-project --with dist/*.whl havoc365 --help
+          uv run --isolated --no-project --with dist/*.whl havoc365 lifeboat deploy --help
           uv run --isolated --no-project --with dist/*.whl python - <<'PY'
           from importlib.resources import files
           for name in ("index.html", "app.js", "style.css", "logo.png", "lifebuoy.png"):
               assert files("havoc365").joinpath("web", name).is_file(), name
+          assert files("havoc365").joinpath("deploy_assets", "bootstrap.sh").is_file()
+          for provider in ("aws", "gcp", "alibaba"):
+              assert files("havoc365").joinpath("deploy_assets", "terraform", provider, "main.tf").is_file(), provider
           PY

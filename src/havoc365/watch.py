@@ -4,10 +4,10 @@ import os
 import re
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Self
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 import httpx
 
@@ -70,7 +70,7 @@ class SMS:
     recipient: str
 
     @classmethod
-    def from_env(cls) -> Self:
+    def from_env(cls, recipient: str | None = None) -> Self:
         names = (
             "TWILIO_ACCOUNT_SID",
             "TWILIO_AUTH_TOKEN",
@@ -78,6 +78,8 @@ class SMS:
             "TWILIO_TO_NUMBER",
         )
         values = [os.environ.get(name, "") for name in names]
+        if recipient is not None:
+            values[-1] = recipient
         missing = [name for name, value in zip(names, values, strict=True) if not value]
         if missing:
             raise HavocError("SMS requires environment variables: " + ", ".join(missing))
@@ -122,6 +124,64 @@ class SMS:
                 f"SMS provider returned HTTP {response.status_code}. Check Twilio credentials, "
                 "billing and message logs. Requests are not replayed after ambiguous server errors."
             )
+
+
+def invite_roster(path: Path) -> list[dict[str, str]]:
+    people = read_json(
+        path, recovery="Create or repair the private invite roster before starting the watcher."
+    ).get("people")
+    if not isinstance(people, list) or not 1 <= len(people) <= 50:
+        raise HavocError("Invite roster must contain people: a list of 1-50 name/phone objects.")
+    recipients = []
+    seen = set()
+    for person in people:
+        if (
+            not isinstance(person, dict)
+            or set(person) != {"name", "phone"}
+            or not isinstance(person["name"], str)
+            or not 1 <= len(person["name"].strip()) <= 80
+            or any(ord(char) < 32 for char in person["name"])
+            or not isinstance(person["phone"], str)
+            or not re.fullmatch(r"\+[1-9]\d{6,14}", person["phone"])
+            or person["phone"] in seen
+        ):
+            raise HavocError(
+                "Each invite recipient needs a name (1-80 characters) and a unique E.164 phone."
+            )
+        seen.add(person["phone"])
+        recipients.append({"name": person["name"].strip(), "phone": person["phone"]})
+    return recipients
+
+
+def _invitation(client: httpx.Client, url: str, admin: str, name: str) -> str:
+    try:
+        response = client.post(
+            url + "/api/admin/invites",
+            headers={"Authorization": f"Bearer {admin}"},
+            json={"name": name, "role": "member", "hours": 24},
+            follow_redirects=False,
+        )
+    except httpx.TransportError as error:
+        raise HavocError(
+            "Invitation creation was not confirmed. Check Lifeboat administration before retrying."
+        ) from error
+    if response.status_code != 201:
+        raise HavocError(
+            f"Lifeboat invitation returned HTTP {response.status_code}. Check its admin access "
+            "and invitation limits before retrying."
+        )
+    try:
+        value = response.json()
+    except ValueError as error:
+        raise HavocError(
+            "Lifeboat returned an invalid invitation response. Check its URL."
+        ) from error
+    credential = value.get("credential") if isinstance(value, dict) else None
+    if not isinstance(credential, str) or not 32 <= len(credential) <= 512:
+        raise HavocError(
+            "Lifeboat returned no valid invitation credential. Check its server version."
+        )
+    return url + "/#invite=" + quote(credential, safe="")
 
 
 class Watcher:
@@ -197,11 +257,15 @@ def watch(
     once: bool = False,
     sms: bool = False,
     lifeboat_url: str | None = None,
+    invite_roster_path: Path | None = None,
     announce: Callable[[str], None] = print,
 ) -> int:
     interval = positive_seconds(str(interval))
     watcher = Watcher(urls, directory, failures=failures, recoveries=recoveries)
-    provider = SMS.from_env() if sms else None
+    if invite_roster_path is not None and (not sms or not lifeboat_url):
+        raise HavocError("--invite-roster requires --sms and --lifeboat-url; SMS is paid.")
+    recipients = invite_roster(invite_roster_path) if invite_roster_path is not None else []
+    provider = SMS.from_env(recipients[0]["phone"] if recipients else None) if sms else None
     admin = os.environ.get("HAVOC365_LIFEBOAT_ADMIN_TOKEN", "")
     if lifeboat_url:
         lifeboat_url = validate_url(lifeboat_url)
@@ -213,12 +277,23 @@ def watch(
             if provider:
                 if lifeboat_url:
                     try:
-                        set_active(client, lifeboat_url, admin, down)
+                        set_active(client, lifeboat_url, admin, down, source="watcher")
                     except HavocError as error:
                         announce(f"Lifeboat update failed; still attempting SMS: {error}")
                 label = "OUTAGE" if down else "RECOVERY"
                 targets = ", ".join(target_label(url) for url in urls)
-                provider.send(client, f"havoc365 {label}: {targets}"[:1500])
+                if recipients and lifeboat_url is not None:
+                    for person in recipients:
+                        destination = (
+                            _invitation(client, lifeboat_url, admin, person["name"])
+                            if down
+                            else lifeboat_url
+                        )
+                        message = f"havoc365 {label}: {targets[:500]}\nLifeboat: {destination}"
+                        replace(provider, recipient=person["phone"]).send(client, message)
+                else:
+                    destination = f"\nLifeboat: {lifeboat_url}" if lifeboat_url else ""
+                    provider.send(client, f"havoc365 {label}: {targets[:500]}{destination}")
                 announce(f"{label} SMS accepted by Twilio; delivery is not yet confirmed.")
 
         while True:
@@ -227,14 +302,16 @@ def watch(
             except HavocError as error:
                 if lifeboat_url:
                     try:
-                        set_active(client, lifeboat_url, admin, watcher.state["down"])
+                        set_active(
+                            client, lifeboat_url, admin, watcher.state["down"], source="watcher"
+                        )
                     except HavocError as activation_error:
                         raise HavocError(
                             f"{error} Lifeboat update also failed: {activation_error}"
                         ) from error
                 raise
             if lifeboat_url:
-                set_active(client, lifeboat_url, admin, watcher.state["down"])
+                set_active(client, lifeboat_url, admin, watcher.state["down"], source="watcher")
             for result in results:
                 announce(
                     f"{'UP' if result.available else 'DOWN'}  {result.target}  {result.detail}"

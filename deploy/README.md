@@ -133,6 +133,8 @@ havoc365 watch --url https://your-required-service.example.org/health \
 
 Each outage creates one-use 24-hour personal invitations and attempts delivery by paid SMS; recovery messages contain the plain room URL. An uncertain send is not automatically retried, so check delivery evidence and use a private fallback channel rather than assuming every member received an invitation. Manual holds still override watcher activation. SMS is optional and depends on the monitor's network path and the SMS provider.
 
+Revoking someone in Admin ends their current access. Also remove them from the private roster to stop invitations on future outages.
+
 ### Backup and restore
 
 AWS and GCP boot disks persist across reboot and are configured not to auto-delete with the VM. Alibaba stores state on the retained data disk (not the disposable system disk). Deletion protection and Terraform `prevent_destroy` are additional guardrails, not backups. Existing SSH hosts need their own retained disks. SQLite, credentials, Caddy TLS state and disaster recovery all need an operator. Files are SQLite blobs, limited to 25 MiB per attachment and 250 MiB total per room. The consistent database backup includes those blobs; allow for them in private off-host backup storage and restore/disk capacity. Gateways add no file capacity.
