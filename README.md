@@ -80,6 +80,19 @@ In a terminal, `map` shows a table and lets you inspect each service's full find
 
 Drill previews show the pilot roster as a table. Mapping, pilot checks, revert and report show progress while waiting for Graph. Terminal colours follow `NO_COLOR` when set.
 
+### Teams workflows and Power Automate
+
+Export the flows you want to check as JSON or a ZIP package, then include them in the map:
+
+```sh
+havoc365 map --flows outage-notifications.zip
+havoc365 map --exports-only --flows definition.json --no-interactive
+```
+
+`--flows` can be repeated. The export reader finds Outlook, SharePoint and Teams connector references, including nested workflow actions, and legacy Teams incoming-webhook URLs. It reports workflow names, never webhook URLs or connection credentials. `--exports-only` needs no login and makes no network calls.
+
+This is export analysis, not automatic tenant-wide flow discovery. [Teams Workflows replaced classic connectors](https://learn.microsoft.com/en-us/microsoftteams/platform/webhooks-and-connectors/what-are-webhooks-and-connectors), and Graph doesn't expose a complete webhook inventory. Export the relevant workflows from Power Automate and refresh the exports when they change. Treat exports as credentials and keep them outside this repository.
+
 ## Commands
 
 | Command | What it does | Changes your tenant |

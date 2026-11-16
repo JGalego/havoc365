@@ -136,5 +136,13 @@
       "JSON whitespace normalized"
     ],
     "kind": "published Microsoft Learn example, not a tenant capture"
+  },
+  "workflow-template.json": {
+    "url": "https://learn.microsoft.com/en-us/azure/logic-apps/logic-apps-azure-resource-manager-templates-overview",
+    "example": "Full template example",
+    "transformations": [
+      "JSON whitespace normalized"
+    ],
+    "kind": "published Microsoft Learn example, not a tenant capture"
   }
 }
