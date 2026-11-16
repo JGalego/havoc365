@@ -1,0 +1,10 @@
+{
+  "value": [
+    {
+      "accountEnabled": true,
+      "displayName": "amasf",
+      "servicePrincipalType": "Application",
+      "signInAudience": "AzureADMyOrg"
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+[project]
+name = "havoc365"
+version = "0.1.0.dev0"
+description = "Map what stops working when Microsoft 365 goes down, and rehearse the outage."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+dependencies = [
+    "dnspython>=2.9.2",
+    "httpx>=0.28.1",
+    "msal>=1.39.0",
+]
+
+[project.scripts]
+havoc365 = "havoc365.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.20,<0.13"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+addopts = "-m 'not live and not network'"
+markers = [
+    "live: runs against the test tenant in HAVOC365_TEST_TENANT",
+    "network: calls public Microsoft endpoints or DNS, no credentials needed",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+    "ruff>=0.17.5",
+]

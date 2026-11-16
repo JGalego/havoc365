@@ -1,0 +1,53 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#search",
+  "value": [
+    {
+      "searchTerms": [
+        "contoso"
+      ],
+      "hitsContainers": [
+        {
+          "total": 1,
+          "moreResultsAvailable": false,
+          "hits": [
+            {
+              "hitId": "FlULeN/ui/1GjLx1rUfio5UAAEl",
+              "rank": 1,
+              "summary": "<c0>Contoso</c0> Detailed Design <ddd/>",
+              "resource": {
+                "@odata.type": "#microsoft.graph.driveItem",
+                "createdDateTime": "2019-06-10T06:37:43Z",
+                "lastModifiedDateTime": "2019-06-10T06:37:43Z",
+                "name": "web_part_test_long Notebook",
+                "webUrl": "https://contoso.sharepoint.com/sites/contoso-team/contoso-designs.docx",
+                "createdBy": {
+                  "user": {
+                    "displayName": "Michaelvincent Santos;Provisioning User"
+                  }
+                },
+                "lastModifiedBy": {
+                  "user": {
+                    "displayName": "Richard Mayer"
+                  }
+                },
+                "parentReference": {
+                  "siteId": "m365x231305.sharepoint.com,5724d91f-650c-4810-83cc-61a8818917d6,c3ba25dc-2c9f-48cb-83be-74cdf68ea5a0",
+                  "driveId": "da61a2b0-4120-4a3f-812b-0fc0d79bf16b",
+                  "sharepointIds": {
+                    "listId": "c61d1892-ca82-4f53-b16f-6bb8a379e2b2",
+                    "listItemId": "1027",
+                    "listItemUniqueId": "E320AFEB-AD73-46A2-83D7-985FAA4B206D"
+                  }
+                },
+                "fileSystemInfo": {
+                  "createdDateTime": "2019-06-10T06:37:43Z",
+                  "lastModifiedDateTime": "2019-06-10T06:37:43Z"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

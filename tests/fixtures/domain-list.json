@@ -1,0 +1,18 @@
+{
+  "value": [
+    {
+      "authenticationType": "authenticationType-value",
+      "availabilityStatus": "availabilityStatus-value",
+      "isAdminManaged": true,
+      "isDefault": true,
+      "isInitial": true,
+      "isRoot": true,
+      "isVerified": true,
+      "id": "contoso.com",
+      "supportedServices": [
+        "Email",
+        "OfficeCommunicationsOnline"
+      ]
+    }
+  ]
+}

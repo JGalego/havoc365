@@ -1,0 +1,54 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#roleManagement/directory/roleAssignments(principal())",
+  "value": [
+    {
+      "id": "lAPpYvVpN0KRkAEhdxReEMmO4KwRqtpKkUWt3wOYIz4-1",
+      "principalId": "ace08ec9-aa11-4ada-9145-addf0398233e",
+      "resourceScope": "/",
+      "directoryScopeId": "/",
+      "roleDefinitionId": "62e90394-69f5-4237-9190-012177145e10",
+      "principal": {
+        "@odata.type": "#microsoft.graph.user",
+        "id": "ace08ec9-aa11-4ada-9145-addf0398233e",
+        "accountEnabled": true,
+        "displayName": "Joey Cruz",
+        "imAddresses": [
+          "joeyc@contoso.com"
+        ],
+        "mail": "joeyc@contoso.com",
+        "mailNickname": "joeyc",
+        "userType": "Member"
+      }
+    },
+    {
+      "id": "lAPpYvVpN0KRkAEhdxReEC6Xh29-LklLmYDrOIi9z-E-1",
+      "principalId": "6f87972e-2e7e-4b49-9980-eb3888bdcfe1",
+      "resourceScope": "/",
+      "directoryScopeId": "/",
+      "roleDefinitionId": "62e90394-69f5-4237-9190-012177145e10",
+      "principal": {
+        "@odata.type": "#microsoft.graph.user",
+        "id": "6f87972e-2e7e-4b49-9980-eb3888bdcfe1",
+        "accountEnabled": true,
+        "displayName": "Kalyan Krishna",
+        "imAddresses": [],
+        "userType": "Guest"
+      }
+    },
+    {
+      "id": "lAPpYvVpN0KRkAEhdxReEMgc_BA2rIZBuZsM-BSqLdU-1",
+      "principalId": "10fc1cc8-ac36-4186-b99b-0cf814aa2dd5",
+      "resourceScope": "/",
+      "directoryScopeId": "/",
+      "roleDefinitionId": "62e90394-69f5-4237-9190-012177145e10",
+      "principal": {
+        "@odata.type": "#microsoft.graph.user",
+        "id": "10fc1cc8-ac36-4186-b99b-0cf814aa2dd5",
+        "accountEnabled": true,
+        "displayName": "Markie Downing",
+        "imAddresses": [],
+        "userType": "Guest"
+      }
+    }
+  ]
+}

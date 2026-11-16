@@ -1,0 +1,140 @@
+{
+  "domain-list.json": {
+    "url": "https://learn.microsoft.com/en-us/graph/api/domain-list?view=graph-rest-1.0",
+    "status": 200,
+    "example": 1,
+    "transformations": [
+      "JSON whitespace normalized"
+    ],
+    "kind": "published Microsoft Learn example, not a tenant capture"
+  },
+  "serviceprincipal-list.json": {
+    "url": "https://learn.microsoft.com/en-us/graph/api/serviceprincipal-list?view=graph-rest-1.0",
+    "status": 200,
+    "example": 1,
+    "transformations": [
+      "JSON whitespace normalized"
+    ],
+    "kind": "published Microsoft Learn example, not a tenant capture"
+  },
+  "application-list.json": {
+    "url": "https://learn.microsoft.com/en-us/graph/api/application-list?view=graph-rest-1.0",
+    "status": 200,
+    "example": 1,
+    "transformations": [
+      "JSON whitespace normalized"
+    ],
+    "kind": "published Microsoft Learn example, not a tenant capture"
+  },
+  "signin-list.json": {
+    "url": "https://learn.microsoft.com/en-us/graph/api/signin-list?view=graph-rest-1.0",
+    "status": 200,
+    "example": 1,
+    "transformations": [
+      "JSON whitespace normalized",
+      "trailing JSON comma removed"
+    ],
+    "kind": "published Microsoft Learn example, not a tenant capture"
+  },
+  "signin-list-2.json": {
+    "url": "https://learn.microsoft.com/en-us/graph/api/signin-list?view=graph-rest-1.0",
+    "status": 200,
+    "example": 2,
+    "transformations": [
+      "JSON whitespace normalized",
+      "trailing JSON comma removed"
+    ],
+    "kind": "published Microsoft Learn example, not a tenant capture"
+  },
+  "group-list.json": {
+    "url": "https://learn.microsoft.com/en-us/graph/api/group-list?view=graph-rest-1.0",
+    "status": 200,
+    "example": 1,
+    "transformations": [
+      "JSON whitespace normalized"
+    ],
+    "kind": "published Microsoft Learn example, not a tenant capture"
+  },
+  "group-list-transitivemembers.json": {
+    "url": "https://learn.microsoft.com/en-us/graph/api/group-list-transitivemembers?view=graph-rest-1.0",
+    "status": 200,
+    "example": 1,
+    "transformations": [
+      "JSON whitespace normalized"
+    ],
+    "kind": "published Microsoft Learn example, not a tenant capture"
+  },
+  "rbacapplication-list-roleassignments.json": {
+    "url": "https://learn.microsoft.com/en-us/graph/api/rbacapplication-list-roleassignments?view=graph-rest-1.0",
+    "status": 200,
+    "example": 1,
+    "transformations": [
+      "JSON whitespace normalized",
+      "trailing JSON comma removed"
+    ],
+    "kind": "published Microsoft Learn example, not a tenant capture"
+  },
+  "rbacapplication-list-roleeligibilityscheduleinstances.json": {
+    "url": "https://learn.microsoft.com/en-us/graph/api/rbacapplication-list-roleeligibilityscheduleinstances?view=graph-rest-1.0",
+    "status": 200,
+    "example": 1,
+    "transformations": [
+      "JSON whitespace normalized"
+    ],
+    "kind": "published Microsoft Learn example, not a tenant capture"
+  },
+  "conditionalaccessroot-post-policies.json": {
+    "url": "https://learn.microsoft.com/en-us/graph/api/conditionalaccessroot-post-policies?view=graph-rest-1.0",
+    "status": 201,
+    "example": 1,
+    "transformations": [
+      "JSON whitespace normalized"
+    ],
+    "kind": "published Microsoft Learn example, not a tenant capture"
+  },
+  "conditionalaccessroot-list-policies.json": {
+    "url": "https://learn.microsoft.com/en-us/graph/api/conditionalaccessroot-list-policies?view=graph-rest-1.0",
+    "status": 200,
+    "example": 1,
+    "transformations": [
+      "JSON whitespace normalized"
+    ],
+    "kind": "published Microsoft Learn example, not a tenant capture"
+  },
+  "user-revokesigninsessions.json": {
+    "url": "https://learn.microsoft.com/en-us/graph/api/user-revokesigninsessions?view=graph-rest-1.0",
+    "status": 200,
+    "example": 1,
+    "transformations": [
+      "JSON whitespace normalized"
+    ],
+    "kind": "published Microsoft Learn example, not a tenant capture"
+  },
+  "search-files.json": {
+    "url": "https://learn.microsoft.com/en-us/graph/search-concept-files",
+    "status": 200,
+    "example": 1,
+    "transformations": [
+      "JSON whitespace normalized"
+    ],
+    "kind": "published Microsoft Learn example, not a tenant capture"
+  },
+  "throttled.json": {
+    "url": "https://learn.microsoft.com/en-us/graph/throttling",
+    "status": 429,
+    "example": 1,
+    "transformations": [
+      "JSON whitespace normalized"
+    ],
+    "kind": "published Microsoft Learn example, not a tenant capture"
+  },
+  "device-token.json": {
+    "url": "https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-device-code",
+    "status": 200,
+    "example": "Successful authentication response",
+    "transformations": [
+      "JSON whitespace normalized"
+    ],
+    "kind": "published Microsoft Learn example, not a tenant capture"
+  }
+}

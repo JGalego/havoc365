@@ -45,21 +45,29 @@ You need [uv](https://docs.astral.sh/uv/) and a Microsoft 365 account with the G
    ```
 
    ```text
-   contoso.onmicrosoft.com · 1,240 users
+   contoso.onmicrosoft.com
 
    If Exchange Online goes down
-     ✗ 14 apps and devices send mail through Exchange   monitoring-prod, scan-to-email, +12
-     ✗ 6 apps send mail through Microsoft Graph         HR Portal, Ticketing, +4
-     ✗ contoso.com mail goes straight to Exchange       no fallback in front of it
+     14 identities used SMTP AUTH   alerts@contoso.com, monitoring-prod@contoso.com, scanner@contoso.com, +11
+     6 apps request Microsoft Graph Mail.Send   HR Portal, Notifications, Ticketing, +3
+     contoso.com has an MX route straight to Exchange   contoso-com.mail.protection.outlook.com
 
    If SharePoint goes down
-     ✗ 9 runbooks are stored in SharePoint              Major Incident.docx, +8
+     9 runbook search matches in SharePoint   Major Incident.docx, Outage Runbook.docx, Runbook.docx, +6
 
    If Entra ID sign-in goes down
-     ✗ 47 apps sign in with Entra ID                    Payroll, VPN, Wiki, +44
+     47 enabled enterprise apps use Entra ID   Payroll, VPN, Wiki, +44
+
+   Limits and skipped checks
+     - SMTP observations cover the last 7 days, not every sender or device.
+     - Mail.Send entries are requested permissions, not proof of consent or recent use.
+     - File search covers only files this account can read; matches need manual review.
+     - No matches does not prove that a dependency is absent.
 
    Report written to blast-radius.md
    ```
+
+The report uses SMTP AUTH sign-in logs, app registrations, enterprise apps, domain MX records, and a file search for `runbook`, `major incident` or `incident response`. It cannot identify every device behind a shared mail account or runbooks that don't match those terms. It doesn't count tenant users; that would need another Graph permission.
 
 ## Commands
 
@@ -81,10 +89,15 @@ havoc365 drill plan --group "Outage Drill" --duration 30m
 havoc365 drill run  --group "Outage Drill" --duration 30m
 ```
 
-- The drill creates one Conditional Access policy, named `havoc365-drill-<id>`, to block Microsoft 365 for that group.
-- It refuses to run for groups with more than 25 members or anyone holding an admin role.
+- The drill creates one Conditional Access policy, named `havoc365-drill-<id>`, targeting the group's validated user roster and the Office 365 application suite. Later group joins don't expand the drill.
+- It refuses empty groups, groups with more than 25 members, nested groups, dynamic or hidden-membership groups, and anyone with an active or eligible admin role, including roles inherited through groups. It also refuses to target the signed-in operator. If it can't complete those checks, it won't start.
+- `drill run` shows the roster and requires you to type the group name before it creates the policy.
 - It revokes the group's sessions at the start, though existing access tokens may continue to work until they expire.
-- The process removes the policy when the timer runs out or you press Ctrl-C. If it crashes, the policy stays in place. Run `havoc365 drill revert` to remove it.
+- The process removes the policy when the timer runs out, you press Ctrl-C, or it receives SIGTERM. Removal can be delayed if Graph is unavailable. The policy has no server-side expiry: if the process is killed, the policy stays in place.
+- Run `havoc365 drill revert` to remove drill policies, including from another machine signed in to the same tenant. It doesn't need the original machine's state. If removal fails after retries, the error names the remaining policy and explains how to remove it in Entra.
+- `drill report` uses the initiating machine's saved drill window and roster. It shows sign-in attempts, not every app or document someone opened. Sign-in logs can arrive late.
+
+Sign-in tokens and drill history are stored under `$XDG_STATE_HOME/havoc365`, or `~/.local/state/havoc365` by default. The token cache is not encrypted; the directory is owner-only and files are mode `0600`. Treat them as credentials. Drill recovery details are saved before policy creation, so a lost response doesn't erase the policy's name.
 
 ## Permissions
 
@@ -97,6 +110,8 @@ havoc365 uses delegated Microsoft Graph permissions. Access is limited by both t
 
 Reading sign-in logs requires Entra ID P1 or higher. Without it, `map` skips the checks that need those logs and reports which checks it skipped.
 
+Drill commands request their additional scopes at sign-in if needed; grant admin consent for them before running a drill. Conditional Access requires Entra ID P1 for the targeted users. A forbidden response fails the command rather than being treated as an empty result. Only the [documented non-premium-tenant error](https://learn.microsoft.com/en-us/troubleshoot/entra/entra-id/users-groups-entra-apis/b2c-or-tenant-premium-license-sign-in-activities) skips the mapper's sign-in checks; that error can also occur when Graph hasn't cached licensing information.
+
 ## Roadmap
 
 - [ ] `map` for Exchange Online, SharePoint and Entra ID
@@ -108,6 +123,27 @@ Reading sign-in logs requires Entra ID P1 or higher. Without it, `map` skips the
 ## Documentation
 
 Follow the [prose guidelines](WRITING.md) when editing this README or other project documentation.
+
+## Development
+
+```sh
+uv sync
+uv run ruff check src tests
+uv run ruff format --check src tests
+uv run pytest
+```
+
+[CI](.github/workflows/ci.yml) runs these checks on Python 3.12 and 3.13 for pushes and pull requests, builds the source distribution and wheel, and smoke-tests the installed CLI. Ruff covers the CLI and tests, not the standalone logo renderer. CI uses the lockfile and doesn't run live tests or need tenant credentials.
+
+Tests run offline by default and block network connections. Response fixtures come from published Microsoft Learn examples; [sources.json](tests/fixtures/sources.json) records the source URLs and normalization applied to each. Tests inject failures and modify copies of those examples to exercise safeguards; these are not tenant captures.
+
+The read-only live check needs a dedicated test tenant, a real app registration and a cached sign-in for that tenant:
+
+```sh
+HAVOC365_TEST_TENANT=<test-tenant-id> uv run pytest -m live
+```
+
+No live test starts a drill. Do not run drills against production.
 
 ## License
 

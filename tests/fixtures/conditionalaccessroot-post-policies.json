@@ -1,0 +1,50 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#conditionalAccess/policies/$entity",
+  "id": "7359d0e0-d8a9-4afa-8a93-e23e099d7be8",
+  "displayName": "Access to EXO requires MFA",
+  "createdDateTime": "2019-10-14T19:52:00.050958Z",
+  "modifiedDateTime": null,
+  "state": "enabled",
+  "sessionControls": null,
+  "conditions": {
+    "signInRiskLevels": [],
+    "clientAppTypes": [
+      "mobileAppsAndDesktopClients",
+      "browser"
+    ],
+    "platforms": null,
+    "applications": {
+      "includeApplications": [
+        "00000002-0000-0ff1-ce00-000000000000"
+      ],
+      "excludeApplications": [],
+      "includeUserActions": []
+    },
+    "users": {
+      "includeUsers": [],
+      "excludeUsers": [],
+      "includeGroups": [
+        "ba8e7ded-8b0f-4836-ba06-8ff1ecc5c8ba"
+      ],
+      "excludeGroups": [],
+      "includeRoles": [],
+      "excludeRoles": []
+    },
+    "locations": {
+      "includeLocations": [
+        "All"
+      ],
+      "excludeLocations": [
+        "AllTrusted"
+      ]
+    }
+  },
+  "grantControls": {
+    "operator": "OR",
+    "builtInControls": [
+      "mfa"
+    ],
+    "customAuthenticationFactors": [],
+    "termsOfUse": []
+  }
+}
