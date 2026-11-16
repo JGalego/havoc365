@@ -1,0 +1,25 @@
+:root { color-scheme: dark; font-family: system-ui, sans-serif; background: #101725; color: #e4ecf7; }
+body { overflow-wrap: anywhere; }
+* { box-sizing: border-box; }
+body { margin: 0; padding: 2rem 1rem; }
+main { max-width: 760px; margin: auto; }
+header { border-bottom: 1px solid #33425a; margin-bottom: 2rem; padding-bottom: 1rem; }
+.eyebrow { color: #83d9ec; letter-spacing: .14em; font-size: .8rem; }
+h1 { font-size: clamp(2.5rem, 8vw, 4rem); margin: .5rem 0; }
+h2 { font-size: 1.2rem; }
+label { display: block; margin: 1rem 0 .4rem; }
+input, textarea { width: 100%; padding: .8rem; font: inherit; color: inherit; background: #182337; border: 1px solid #526982; border-radius: .4rem; }
+button { padding: .7rem 1rem; margin-top: 1rem; background: #83d9ec; color: #101725; border: 0; border-radius: .4rem; font: inherit; font-weight: 600; cursor: pointer; }
+button:disabled { opacity: .6; cursor: wait; }
+button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px solid #e8ba74; outline-offset: 3px; }
+.toolbar { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+.toolbar button { margin: 0; }
+aside, #standby { background: #182337; padding: 1rem 1.5rem; border-radius: .5rem; margin: 1.5rem 0; }
+#messages { padding: 0; list-style: none; max-height: 28rem; overflow: auto; }
+#messages li { border-bottom: 1px solid #33425a; padding: 1rem 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+#messages time { display: block; font-size: .8rem; color: #a9bdd5; margin-top: .5rem; }
+#error { color: #ffb8a5; min-height: 1.5rem; }
+#connection { color: #ffb8a5; }
+#connection:empty { display: none; }
+footer { color: #a9bdd5; margin-top: 2rem; font-size: .85rem; }
+[hidden] { display: none !important; }

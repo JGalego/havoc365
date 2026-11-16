@@ -104,6 +104,9 @@ This is export analysis, not automatic tenant-wide flow discovery. [Teams Workfl
 | `havoc365 drill revert` | Ends a drill early | Removes that policy |
 | `havoc365 drill report` | Reports sign-in attempts during the drill | No |
 | `havoc365 watch` | Probes configured HTTPS URLs and optionally sends outage/recovery SMS | No |
+| `havoc365 lifeboat serve` | Hosts independent fallback chat and contacts | No |
+| `havoc365 lifeboat activate` | Opens the lifeboat's chat | No |
+| `havoc365 lifeboat standby` | Returns chat to standby; contacts stay available | No |
 
 ## Watching for outages
 
@@ -121,6 +124,53 @@ An outage starts after three consecutive failed checks; recovery needs two succe
 For SMS, set `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER` and `TWILIO_TO_NUMBER` in the watcher's environment, then add `--sms`. Numbers must use E.164 format. SMS is paid and opt-in; without that flag the watcher only prints results. Each state change submits one message through the [Twilio Messages API](https://www.twilio.com/docs/messaging/api/message-resource). API acceptance doesn't guarantee delivery.
 
 An interrupted or ambiguous SMS submission isn't automatically replayed. The error identifies the watch state file: check Twilio's message logs before removing that one file and restarting. Keep provider credentials out of shell history and version control.
+
+## Lifeboat
+
+Host the lifeboat on a machine outside Microsoft, with its own DNS and HTTPS. It has no Entra dependency and loads no third-party scripts, fonts or assets. Contacts are available on standby; the watcher opens chat during an outage and returns it to standby after recovery.
+
+Generate two different random tokens, then start the server:
+
+```sh
+export HAVOC365_LIFEBOAT_TOKEN="$(uv run --no-project python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+export HAVOC365_LIFEBOAT_ADMIN_TOKEN="$(uv run --no-project python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+havoc365 lifeboat serve --contacts /private/contacts.json --port 8080
+```
+
+```text
+Lifeboat listening at http://127.0.0.1:8080. Expose it only behind an HTTPS reverse proxy.
+Room starts in its saved state. Names are self-reported; share the member token out of band.
+```
+
+Keep these tokens in your host's secret store so restarts use the same values. Share only the member token with participants, through a channel that doesn't depend on Microsoft. Give the administrator token to the watcher. Both must be at least 32 characters; names in chat are self-reported, not verified identities.
+
+The contacts file is local configuration, not a tenant export:
+
+```json
+{"contacts": [{"name": "Incident desk", "contact": "Your independent contact number"}]}
+```
+
+The server binds to `127.0.0.1` only. Put an HTTPS reverse proxy in front of it. For example, with [Caddy](https://caddyserver.com/docs/quick-starts/reverse-proxy):
+
+```caddyfile
+fallback.example.org {
+    reverse_proxy 127.0.0.1:8080
+}
+```
+
+Use your own domain and supervise the server and watcher with your host's service manager. Never expose the loopback HTTP port directly. Browser tokens stay in the tab's memory, not URLs or local storage. Reloading or leaving signs the participant out.
+
+Point the watcher at the HTTPS address:
+
+```sh
+havoc365 watch --url https://outlook.office.com/owa/ --lifeboat-url https://fallback.example.org
+havoc365 lifeboat activate --url https://fallback.example.org
+havoc365 lifeboat standby --url https://fallback.example.org
+```
+
+The watcher synchronizes the room after every check, including after a restart. Its state takes precedence over manual activation while it is running. SMS and lifeboat updates are independent: a failed SMS still attempts activation. A failed lifeboat update stops the watcher with an error; supervise and alert on that process too.
+
+Room state, imported contacts and the newest 1,000 messages survive restarts in an owner-only SQLite database under the havoc365 state directory. The browser shows the newest 200 messages. Chat is plain text, limited to 2,000 characters per message; keep secrets and sensitive incident data elsewhere. Anyone holding the shared member token can read the room, so rotate it when membership changes. This is a small incident room, not a replacement for a managed messaging service.
 
 ## Drills
 
@@ -175,7 +225,7 @@ uv run ruff format --check src tests
 uv run pytest
 ```
 
-[CI](.github/workflows/ci.yml) runs these checks on Python 3.12 and 3.13 for pushes and pull requests, builds the source distribution and wheel, and smoke-tests the installed CLI. Ruff covers the CLI and tests, not the standalone logo renderer. CI uses the lockfile and doesn't run live tests or need tenant credentials.
+[CI](.github/workflows/ci.yml) runs these checks on Python 3.12 and 3.13 for pushes and pull requests, builds the source distribution and wheel, and smoke-tests the installed CLI and packaged lifeboat assets. Ruff covers the CLI and tests, not the standalone logo renderer. CI uses the lockfile and doesn't run live tests or need tenant credentials.
 
 Tests run offline by default and block network connections. Response fixtures come from published Microsoft Learn examples; [sources.json](tests/fixtures/sources.json) records the source URLs and normalization applied to each. Tests inject failures and modify copies of those examples to exercise safeguards; these are not tenant captures.
 

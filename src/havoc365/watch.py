@@ -195,22 +195,47 @@ def watch(
     recoveries: int = 2,
     once: bool = False,
     sms: bool = False,
+    lifeboat_url: str | None = None,
     announce: Callable[[str], None] = print,
 ) -> int:
+    from havoc365.lifeboat import set_active
+
     interval = positive_seconds(str(interval))
     watcher = Watcher(urls, directory, failures=failures, recoveries=recoveries)
     provider = SMS.from_env() if sms else None
+    admin = os.environ.get("HAVOC365_LIFEBOAT_ADMIN_TOKEN", "")
+    if lifeboat_url:
+        target_label(lifeboat_url)
+        if len(admin) < 32:
+            raise HavocError("Set HAVOC365_LIFEBOAT_ADMIN_TOKEN before using --lifeboat-url.")
     with httpx.Client(timeout=10) as client:
 
         def notify(down: bool) -> None:
             if provider:
+                if lifeboat_url:
+                    try:
+                        set_active(client, lifeboat_url, admin, down)
+                    except HavocError as error:
+                        announce(f"Lifeboat update failed; still attempting SMS: {error}")
                 label = "OUTAGE" if down else "RECOVERY"
                 targets = ", ".join(target_label(url) for url in urls)
                 provider.send(client, f"havoc365 {label}: {targets}"[:1500])
                 announce(f"{label} SMS accepted by Twilio; delivery is not yet confirmed.")
 
         while True:
-            results = watcher.tick(client, notify if provider else None)
+            try:
+                results = watcher.tick(client, notify if provider else None)
+            except HavocError as error:
+                if lifeboat_url:
+                    try:
+                        set_active(client, lifeboat_url, admin, watcher.state["down"])
+                    except HavocError as activation_error:
+                        raise HavocError(
+                            f"{error} Lifeboat update also failed: {activation_error}"
+                        ) from error
+                raise
+            if lifeboat_url:
+                set_active(client, lifeboat_url, admin, watcher.state["down"])
             for result in results:
                 announce(
                     f"{'UP' if result.available else 'DOWN'}  {result.target}  {result.detail}"

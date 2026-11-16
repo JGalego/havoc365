@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>havoc365 lifeboat</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <main>
+    <header><p class="eyebrow">HAVOC365 / LIFEBOAT</p><h1>Still here.</h1><p>Fallback chat and contacts. No Microsoft sign-in.</p></header>
+    <form id="join">
+      <label for="token">Member token</label>
+      <input id="token" type="password" required autocomplete="off">
+      <button>Join lifeboat</button>
+    </form>
+    <p id="error" role="alert"></p>
+    <p id="connection" role="status"></p>
+    <section id="workspace" hidden>
+      <div class="toolbar"><p id="status" role="status"></p><button id="leave" type="button">Leave</button></div>
+      <aside><h2>Contacts</h2><ul id="contacts"></ul></aside>
+      <p id="standby">Chat is on standby. Your administrator or outage watcher can open it.</p>
+      <section id="chat" hidden>
+        <h2>Incident chat</h2>
+        <p>Names are self-reported. Verify urgent requests through a known contact.</p>
+        <ol id="messages" aria-live="polite"></ol>
+        <form id="send">
+          <label for="author">Your name</label><input id="author" maxlength="80" required autocomplete="nickname">
+          <label for="message">Message</label><textarea id="message" maxlength="2000" required rows="3"></textarea>
+          <button>Send message</button>
+        </form>
+      </section>
+    </section>
+    <footer>Tokens stay in this tab's memory. Leaving or reloading signs you out.</footer>
+  </main>
+</body>
+</html>

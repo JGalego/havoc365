@@ -1,12 +1,16 @@
 import argparse
+import os
 import signal
 import sys
 from pathlib import Path
+
+import httpx
 
 from havoc365.auth import Auth
 from havoc365.drills import plan, report, revert, run
 from havoc365.errors import HavocError
 from havoc365.graph import Graph
+from havoc365.lifeboat import serve, set_active
 from havoc365.mapping import MapReport, map_tenant
 from havoc365.storage import state_dir, write_private
 from havoc365.ui import UI
@@ -66,6 +70,17 @@ def parser() -> argparse.ArgumentParser:
     monitor.add_argument(
         "--sms", action="store_true", help="Enable paid SMS through configured Twilio credentials"
     )
+    monitor.add_argument("--lifeboat-url", help="HTTPS lifeboat to activate on outages")
+    lifeboat = commands.add_parser(
+        "lifeboat", help="Run or activate independent fallback chat and contacts"
+    )
+    boats = lifeboat.add_subparsers(dest="action", required=True)
+    server = boats.add_parser("serve")
+    server.add_argument("--port", type=int, default=8080)
+    server.add_argument("--contacts", type=Path, help="Local contact JSON file to import")
+    for action in ("activate", "standby"):
+        command = boats.add_parser(action)
+        command.add_argument("--url", required=True, help="HTTPS origin of the lifeboat")
     return root
 
 
@@ -90,6 +105,19 @@ def main(argv: list[str] | None = None) -> int:
     graph: Graph | None = None
     previous_handler = None
     try:
+        if args.command == "lifeboat":
+            if args.action == "serve":
+                serve(state_dir(), args.port, args.contacts)
+            else:
+                with httpx.Client(timeout=10) as client:
+                    set_active(
+                        client,
+                        args.url,
+                        os.environ.get("HAVOC365_LIFEBOAT_ADMIN_TOKEN", ""),
+                        args.action == "activate",
+                    )
+                ui.message(f"Lifeboat is {'open' if args.action == 'activate' else 'on standby'}.")
+            return 0
         if args.command == "watch":
             return watch(
                 args.url,
@@ -99,6 +127,7 @@ def main(argv: list[str] | None = None) -> int:
                 recoveries=args.recoveries,
                 once=args.once,
                 sms=args.sms,
+                lifeboat_url=args.lifeboat_url,
                 announce=ui.message,
             )
         if args.command == "map" and args.exports_only:
