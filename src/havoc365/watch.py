@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from havoc365.errors import HavocError
+from havoc365.lifeboat import set_active, validate_url
 from havoc365.storage import read_json, write_json
 
 
@@ -198,14 +199,12 @@ def watch(
     lifeboat_url: str | None = None,
     announce: Callable[[str], None] = print,
 ) -> int:
-    from havoc365.lifeboat import set_active
-
     interval = positive_seconds(str(interval))
     watcher = Watcher(urls, directory, failures=failures, recoveries=recoveries)
     provider = SMS.from_env() if sms else None
     admin = os.environ.get("HAVOC365_LIFEBOAT_ADMIN_TOKEN", "")
     if lifeboat_url:
-        target_label(lifeboat_url)
+        lifeboat_url = validate_url(lifeboat_url)
         if len(admin) < 32:
             raise HavocError("Set HAVOC365_LIFEBOAT_ADMIN_TOKEN before using --lifeboat-url.")
     with httpx.Client(timeout=10) as client:

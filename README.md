@@ -144,6 +144,15 @@ Room starts in its saved state. Names are self-reported; share the member token 
 
 Open **http://127.0.0.1:8080** on the machine running the server and enter the member token. From this checkout, use `uv run havoc365` in place of `havoc365`. If you're connected over SSH or VS Code Remote, forward port 8080 to your own machine; the remote host's loopback address isn't your laptop's.
 
+To try chat locally, keep the server running and use another terminal with the **same administrator token** in `HAVOC365_LIFEBOAT_ADMIN_TOKEN`:
+
+```sh
+havoc365 lifeboat activate --url http://127.0.0.1:8080
+havoc365 lifeboat standby --url http://127.0.0.1:8080
+```
+
+Activation commands allow HTTP only for numeric loopback addresses (`127.0.0.1` and `[::1]`). Remote lifeboats require HTTPS.
+
 Keep these tokens in your host's secret store so restarts use the same values. Share only the member token with participants, through a channel that doesn't depend on Microsoft. Give the administrator token to the watcher. Both must be at least 32 characters; names in chat are self-reported, not verified identities.
 
 Contacts are optional. Installation doesn't create a contacts file. To import contacts, save a JSON file outside this checkout, then restart with `--contacts` pointing to that real file. For example, create `$HOME/.config/havoc365/contacts.json` with your own contact details:
@@ -158,6 +167,10 @@ havoc365 lifeboat serve --contacts "$HOME/.config/havoc365/contacts.json" --port
 
 Omitting `--contacts` keeps any previously imported contacts. The file is local configuration, not a tenant export.
 
+The room shows its state separately from its connection: **Standby**, **Chat open**, or **Reconnecting**. An open room isn't proof of a Microsoft outage; it can also be a drill. Search contacts by name or contact detail and use **Copy contact** to copy a number or address.
+
+Press Ctrl+Enter (Cmd+Enter on macOS) to send a check-in. Incoming messages don't pull you away from older messages you're reading; **Jump to latest** brings you back. A failed send keeps the draft and its warning visible. Drafts also survive a connection failure or a switch to standby, but leaving or reloading clears them. There is no automatic message retry.
+
 The server binds to `127.0.0.1` only. Put an HTTPS reverse proxy in front of it. For example, with [Caddy](https://caddyserver.com/docs/quick-starts/reverse-proxy):
 
 ```caddyfile
@@ -167,6 +180,24 @@ fallback.example.org {
 ```
 
 Use your own domain and supervise the server and watcher with your host's service manager. Never expose the loopback HTTP port directly. Browser tokens stay in the tab's memory, not URLs or local storage. Reloading or leaving signs the participant out.
+
+### Deployment recommendations
+
+For a small team, use one always-on Linux VPS outside Microsoft, with a persistent local disk. Run the server as an unprivileged user, keep its tokens in a protected environment file, and use systemd or your provider's process supervisor to restart it on failure and boot. Install havoc365 on that host; running the command on your laptop doesn't deploy it elsewhere.
+
+Point a domain such as `fallback.example.org` at the VPS, replace that example name in Caddy's configuration, and allow inbound HTTPS. Participants open **https://your-lifeboat-domain/** in any modern browser and enter the member token. They don't install havoc365. Keep DNS, domain recovery, hosting access and token distribution independent of Microsoft too; an Entra-only VPN or sign-in page in front of the room defeats the fallback.
+
+For private administration over SSH, forward the loopback port instead of opening it publicly:
+
+```sh
+ssh -N -L 8080:127.0.0.1:8080 your-user@your-server
+```
+
+Then open http://127.0.0.1:8080 locally. In VS Code Remote, the **Ports** view provides the same local forwarding. Keep that forward private.
+
+Avoid hosts that sleep when idle and deployments with ephemeral disks. SQLite needs persistent storage; use one server instance rather than independent replicas with different databases. Back up the database with SQLite's backup API or while the service is stopped, not by copying a live database without its WAL. Test a restore and token rotation before relying on it.
+
+The cheapest setup puts the watcher on the same VPS, but a failed VPS then takes out both chat and detection. A watcher on another independent host avoids that shared failure. Monitor both processes from outside that host. `GET /healthz` is an unauthenticated liveness check only; it doesn't prove Microsoft 365 or the room's storage is healthy. This repository doesn't provision hosting, DNS or TLS for you.
 
 Point the watcher at the HTTPS address:
 
@@ -212,6 +243,19 @@ Reading sign-in logs requires Entra ID P1 or higher. Without it, `map` skips the
 
 Drill commands request their additional scopes at sign-in if needed; grant admin consent for them before running a drill. Conditional Access requires Entra ID P1 for the targeted users. A forbidden response fails the command rather than being treated as an empty result. Only the [documented non-premium-tenant error](https://learn.microsoft.com/en-us/troubleshoot/entra/entra-id/users-groups-entra-apis/b2c-or-tenant-premium-license-sign-in-activities) skips the mapper's sign-in checks; that error can also occur when Graph hasn't cached licensing information.
 
+### Testing with a real tenant
+
+Use a dedicated non-production tenant. You don't need an Azure VM or a custom domain: run havoc365 on your own machine and use the tenant's `onmicrosoft.com` domain.
+
+| Option | Cost for a short test | What to check |
+|---|---|---|
+| [Microsoft 365 E5 developer sandbox](https://learn.microsoft.com/en-us/office/developer-program/microsoft-365-developer-program-faq) | Free if you qualify; 25 test licenses | Sandbox eligibility is restricted, including qualifying Visual Studio subscriptions and partner/support programs. Joining the Developer Program alone doesn't qualify you. |
+| [Microsoft 365 Business Premium trial](https://learn.microsoft.com/en-us/microsoft-365/commerce/try-or-buy-microsoft-365?view=o365-worldwide) | Free for 30 days if offered at signup | Includes Exchange, SharePoint and [Entra ID P1](https://learn.microsoft.com/en-us/entra/fundamentals/licensing). Select a plan with Teams if you want to test Teams too. Turn off recurring billing: trials otherwise convert to an annual subscription by default. |
+
+For a complete drill test, also account for [PIM licensing](https://learn.microsoft.com/en-us/entra/id-governance/privileged-identity-management/pim-getting-started). havoc365 checks eligible administrator assignments before it allows a drill; PIM requires Entra ID P2 or ID Governance, not just the P1 needed for Conditional Access. An eligible E5 developer sandbox includes P2. With a Business Premium trial, check which P2/Governance trial or add-on is offered to that tenant before paying. Microsoft's [Entra Suite trial](https://learn.microsoft.com/en-us/entra/fundamentals/try-microsoft-entra-suite) includes ID Governance and requires a P1-containing base plan. Trial availability and commercial terms vary. The tool won't bypass a forbidden eligibility check.
+
+Start with one licensed operator, one licensed ordinary pilot, and a separate emergency administrator outside the pilot. License each account for the features it uses. Register the app and consent to the documented scopes, create a static pilot group containing only the ordinary user, and put a harmless test runbook in SharePoint. Start with `login`, `map` and `drill plan`; run the existing read-only live check after sign-in. Only then deliberately run a short drill in that test tenant, verify the pilot is blocked, and verify both timed cleanup and `drill revert` from another process. Keep the emergency administrator available throughout. Don't weaken or skip the administrator exclusions to get a test through.
+
 ## Roadmap
 
 - [ ] `map` for Exchange Online, SharePoint and Entra ID
@@ -228,12 +272,13 @@ Follow the [prose guidelines](WRITING.md) when editing this README or other proj
 
 ```sh
 uv sync
+uv run playwright install --only-shell chromium
 uv run ruff check src tests
 uv run ruff format --check src tests
 uv run pytest
 ```
 
-[CI](.github/workflows/ci.yml) runs these checks on Python 3.12 and 3.13 for pushes and pull requests, builds the source distribution and wheel, and smoke-tests the installed CLI and packaged lifeboat assets. Ruff covers the CLI and tests, not the standalone logo renderer. CI uses the lockfile and doesn't run live tests or need tenant credentials.
+[CI](.github/workflows/ci.yml) runs these checks on Python 3.12 and 3.13 for pushes and pull requests, builds the source distribution and wheel, and smoke-tests the installed CLI and packaged lifeboat assets. Ruff covers the CLI and tests, not the standalone logo renderer. CI uses the lockfile and doesn't run live tests or need tenant credentials. The Playwright tests run the actual Lifeboat UI against its in-process ASGI app, with browser requests intercepted and third-party requests rejected. On Linux, add `--with-deps` to the browser install command if system libraries are missing.
 
 Tests run offline by default and block network connections. Response fixtures come from published Microsoft Learn examples; [sources.json](tests/fixtures/sources.json) records the source URLs and normalization applied to each. Tests inject failures and modify copies of those examples to exercise safeguards; these are not tenant captures.
 

@@ -70,7 +70,9 @@ def parser() -> argparse.ArgumentParser:
     monitor.add_argument(
         "--sms", action="store_true", help="Enable paid SMS through configured Twilio credentials"
     )
-    monitor.add_argument("--lifeboat-url", help="HTTPS lifeboat to activate on outages")
+    monitor.add_argument(
+        "--lifeboat-url", help="HTTPS lifeboat to activate (loopback HTTP allowed for local tests)"
+    )
     lifeboat = commands.add_parser(
         "lifeboat", help="Run or activate independent fallback chat and contacts"
     )
@@ -80,7 +82,11 @@ def parser() -> argparse.ArgumentParser:
     server.add_argument("--contacts", type=Path, help="Local contact JSON file to import")
     for action in ("activate", "standby"):
         command = boats.add_parser(action)
-        command.add_argument("--url", required=True, help="HTTPS origin of the lifeboat")
+        command.add_argument(
+            "--url",
+            required=True,
+            help="HTTPS lifeboat origin (loopback HTTP allowed for local tests)",
+        )
     return root
 
 

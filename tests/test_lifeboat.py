@@ -136,6 +136,41 @@ def test_lifeboat_cli_validates_port_before_starting_server(capsys):
     assert "between 1 and 65535" in capsys.readouterr().err
 
 
+def test_local_activation_cli_works_without_a_reverse_proxy(monkeypatch, capsys):
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(200, json={"active": True})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr("havoc365.cli.httpx.Client", lambda **kwargs: client)
+    monkeypatch.setenv("HAVOC365_LIFEBOAT_ADMIN_TOKEN", "a" * 32)
+    assert main(["lifeboat", "activate", "--url", "http://127.0.0.1:8080"]) == 0
+    assert str(calls[0].url) == "http://127.0.0.1:8080/api/status"
+    assert "Lifeboat is open" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://fallback.example.org",
+        "https://fallback.example.org/room",
+        "https://user:secret@fallback.example.org",
+        "http://127.0.0.1:bad",
+    ],
+)
+def test_invalid_activation_url_never_receives_admin_token(url):
+    def unexpected(request):
+        pytest.fail("Invalid origins must be rejected before sending credentials")
+
+    with (
+        httpx.Client(transport=httpx.MockTransport(unexpected)) as client,
+        pytest.raises(HavocError, match="HTTPS lifeboat origin"),
+    ):
+        set_active(client, url, "a" * 32, True)
+
+
 def test_sms_failure_does_not_prevent_lifeboat_activation(monkeypatch, capsys):
     calls = []
 

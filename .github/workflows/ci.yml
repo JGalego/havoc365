@@ -45,6 +45,9 @@ jobs:
       - name: Check formatting
         run: uv run --locked ruff format --check src tests
 
+      - name: Install browser for offline UI tests
+        run: uv run --locked playwright install --with-deps --only-shell chromium
+
       - name: Run offline tests
         run: uv run --locked pytest -m "not live and not network"
 

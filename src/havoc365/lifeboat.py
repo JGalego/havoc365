@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from importlib.resources import files
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 import uvicorn
@@ -20,7 +21,6 @@ from starlette.routing import Route
 
 from havoc365.errors import HavocError
 from havoc365.storage import JsonObject, read_json
-from havoc365.watch import target_label
 
 
 def tokens() -> tuple[str, str]:
@@ -234,15 +234,44 @@ def create_app(directory: Path, contacts: Path | None = None) -> Starlette:
     )
 
 
+def validate_url(url: str) -> str:
+    guidance = (
+        "Use an HTTPS lifeboat origin without a path, query or credentials. "
+        "For local testing, HTTP is allowed only at 127.0.0.1 or [::1]."
+    )
+    try:
+        parts = urlsplit(url)
+        port = parts.port
+    except ValueError as error:
+        raise HavocError(guidance) from error
+    if (
+        not parts.hostname
+        or parts.username is not None
+        or parts.password is not None
+        or parts.path not in ("", "/")
+        or parts.query
+        or parts.fragment
+        or any(char.isspace() for char in url)
+        or (port is not None and not 1 <= port <= 65535)
+        or not (
+            parts.scheme == "https"
+            or (parts.scheme == "http" and parts.hostname in {"127.0.0.1", "::1"})
+        )
+    ):
+        raise HavocError(guidance)
+    return urlunsplit((parts.scheme, parts.netloc, "", "", ""))
+
+
 def set_active(client: httpx.Client, url: str, token: str, active: bool) -> None:
-    target_label(url)
+    url = validate_url(url)
     if len(token) < 32:
         raise HavocError("Set HAVOC365_LIFEBOAT_ADMIN_TOKEN to the lifeboat administrator token.")
     try:
         response = client.post(
-            url.rstrip("/") + "/api/status",
+            url + "/api/status",
             headers={"Authorization": f"Bearer {token}"},
             json={"active": active},
+            follow_redirects=False,
         )
     except httpx.TransportError as error:
         raise HavocError(

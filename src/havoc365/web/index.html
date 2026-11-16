@@ -8,31 +8,82 @@
   <script src="/app.js" defer></script>
 </head>
 <body>
-  <main>
-    <header><p class="eyebrow">HAVOC365 / LIFEBOAT</p><h1>Still here.</h1><p>Fallback chat and contacts. No Microsoft sign-in.</p></header>
-    <form id="join">
-      <label for="token">Member token</label>
-      <input id="token" type="password" required autocomplete="off">
-      <button>Join lifeboat</button>
-    </form>
-    <p id="error" role="alert"></p>
-    <p id="connection" role="status"></p>
-    <section id="workspace" hidden>
-      <div class="toolbar"><p id="status" role="status"></p><button id="leave" type="button">Leave</button></div>
-      <aside><h2>Contacts</h2><ul id="contacts"></ul></aside>
-      <p id="standby">Chat is on standby. Your administrator or outage watcher can open it.</p>
-      <section id="chat" hidden>
-        <h2>Incident chat</h2>
-        <p>Names are self-reported. Verify urgent requests through a known contact.</p>
-        <ol id="messages" aria-live="polite"></ol>
-        <form id="send">
-          <label for="author">Your name</label><input id="author" maxlength="80" required autocomplete="nickname">
-          <label for="message">Message</label><textarea id="message" maxlength="2000" required rows="3"></textarea>
-          <button>Send message</button>
+  <a class="skip-link" href="#content">Skip to content</a>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark" aria-hidden="true">h</span><span>havoc365 <span class="brand-divider">/</span> <strong>lifeboat</strong></span></div>
+      <span class="independent"><span class="dot" aria-hidden="true"></span>No Microsoft sign-in</span>
+    </header>
+    <main id="content" tabindex="-1">
+      <section id="welcome" class="welcome-layout">
+        <div class="welcome-copy">
+          <p class="eyebrow">FALLBACK COMMUNICATIONS</p>
+          <h1>Still here.</h1>
+          <p class="intro">Your team's independent place for check-ins and contact details when the usual channels aren't working.</p>
+          <ul class="welcome-points">
+            <li><span class="point-mark" aria-hidden="true">01</span><div><strong>Find someone to call.</strong><p>Contacts stay available while chat is on standby.</p></div></li>
+            <li><span class="point-mark" aria-hidden="true">02</span><div><strong>Check in with the team.</strong><p>Chat opens when your watcher or incident lead activates the room.</p></div></li>
+          </ul>
+        </div>
+        <form id="join" class="card join-card">
+          <p class="eyebrow">JOIN YOUR TEAM</p>
+          <h2>Enter the lifeboat</h2>
+          <p class="muted">Use the member token your incident lead shared with you.</p>
+          <label for="token">Member token</label>
+          <div class="token-field">
+            <input id="token" type="password" required autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="token-help" placeholder="Paste your member token">
+            <button id="show-token" class="button-subtle" type="button" aria-label="Show member token" aria-pressed="false">Show</button>
+          </div>
+          <p id="token-help" class="field-help">Not your Microsoft password. Ask your incident lead if you don't have a token.</p>
+          <p id="error" class="notice-error" role="alert"></p>
+          <button id="join-submit" class="button-primary" type="submit">Join room</button>
+          <details class="join-help"><summary>Can't get in?</summary><p>Check that you're at your team's lifeboat address and have the current member token. Contact your incident lead through a channel outside Microsoft if you're stuck.</p></details>
         </form>
       </section>
-    </section>
-    <footer>Tokens stay in this tab's memory. Leaving or reloading signs you out.</footer>
-  </main>
+      <section id="workspace" aria-label="Incident room" hidden>
+        <div class="room-heading">
+          <div><p class="eyebrow">INDEPENDENT INCIDENT ROOM</p><h1 id="room-title" tabindex="-1">Team check-in</h1></div>
+          <div class="session-actions"><span id="status" class="status-badge" role="status">Connecting</span><button id="open-contacts" class="button-subtle" type="button">Contacts</button><button id="leave" class="button-subtle" type="button">Leave room</button></div>
+        </div>
+        <div id="connection-banner" class="connection-banner" role="status" hidden>
+          <p id="connection"></p><button id="retry" class="button-subtle" type="button">Retry now</button>
+        </div>
+        <div class="room-grid">
+          <div class="room-main">
+            <section id="standby" class="card standby-card">
+              <span class="standby-symbol" aria-hidden="true"></span>
+              <p class="eyebrow">ON STANDBY</p>
+              <h2>The room is ready.</h2>
+              <p>Contacts are available now. Your watcher or incident lead opens chat when it's needed.</p>
+              <p id="draft-notice" class="muted" hidden>Your unsent draft is kept in this tab.</p>
+              <button id="find-contact" class="button-primary" type="button">Find a contact</button>
+            </section>
+            <section id="chat" class="card chat-panel" aria-labelledby="chat-title" hidden>
+              <header class="panel-heading"><div><h2 id="chat-title">Recent check-ins</h2><p class="muted">Newest 200 messages. Names are self-reported.</p></div><span id="message-count" class="count">0</span></header>
+              <div id="chat-empty" class="chat-empty"><h3>Make the first check-in.</h3><p>Say who you are, whether you're affected, and how others can reach you.</p></div>
+              <ol id="messages" role="log" aria-label="Incident messages" aria-live="polite" aria-relevant="additions" tabindex="0"></ol>
+              <button id="jump-latest" class="button-subtle jump-latest" type="button" hidden>New check-ins. Jump to latest</button>
+              <form id="send" class="composer">
+                <label for="author">Your name</label><input id="author" maxlength="80" required autocomplete="nickname" placeholder="How others know you">
+                <label for="message">Your check-in</label><textarea id="message" maxlength="2000" required rows="3" aria-describedby="message-hint message-counter" placeholder="What's happening on your side?"></textarea>
+                <div class="composer-bottom"><p id="message-hint" class="field-help">Ctrl/Cmd+Enter to send. Enter for a new line.</p><span id="message-counter" class="field-help">0 / 2000</span><button id="send-submit" class="button-primary" type="submit">Send check-in</button></div>
+                <p id="send-feedback" role="status"></p>
+              </form>
+            </section>
+          </div>
+          <aside class="card contact-panel" aria-labelledby="contacts-title">
+            <header class="panel-heading"><h2 id="contacts-title">Contacts</h2><span id="contact-count" class="count">0</span></header>
+            <p class="muted">Independent ways to reach your team.</p>
+            <label for="contact-search" class="sr-only">Search contacts</label><input id="contact-search" type="search" placeholder="Search name or contact" autocomplete="off">
+            <ul id="contacts"></ul>
+            <p id="contact-feedback" class="field-help" role="status"></p>
+          </aside>
+        </div>
+        <div class="room-footnote"><p>Verify urgent requests through a known contact. An open room can be a drill or an incident.</p><p id="last-updated">Connecting to the room.</p></div>
+      </section>
+      <noscript><p class="notice-error">JavaScript is required to join this room. Use another browser or contact your incident lead.</p></noscript>
+    </main>
+    <footer><span>havoc365 <span class="brand-divider">/</span> Downtime by appointment.</span><span>Tokens stay in this tab's memory. Leaving or reloading signs you out.</span></footer>
+  </div>
 </body>
 </html>
