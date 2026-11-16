@@ -181,6 +181,11 @@ class DeploymentApp(App[dict]):
             index = self.page - 2
             target = self.targets[index]
             provider = target["provider"]
+            suggested = deploy.suggest_region(
+                target, [other for i, other in enumerate(self.targets) if i != index]
+            )
+            if suggested:
+                target["region"] = suggested
             widgets = [
                 Static(f"Configure {target['name']}", classes="heading", markup=False),
                 Static(
@@ -193,7 +198,31 @@ class DeploymentApp(App[dict]):
             if provider == "ssh":
                 names.append("ssh_port")
             for name in names:
-                widgets.extend(self.form_field(name, LABELS[name], target.get(name, "")))
+                hint = ""
+                if name == "region":
+                    hint = (
+                        f"Suggested {suggested} for regional separation. Editable; verify "
+                        "residency, pricing, account access and capacity."
+                        if suggested
+                        else "Choose your first region; later targets get unused country/EU "
+                        "suggestions where supported. Existing regions are never changed."
+                        if not any(
+                            other["provider"] == provider and other.get("region")
+                            for i, other in enumerate(self.targets)
+                            if i != index
+                        )
+                        else "No automatic change. Keep an explicit region, or choose an unused "
+                        "region manually if suggestions are unavailable or exhausted."
+                    )
+                widgets.extend(self.form_field(name, LABELS[name], target.get(name, ""), hint))
+            if provider != "ssh":
+                widgets.append(
+                    Static(
+                        "Use resources from this region: AWS AMI/VPC/subnet; "
+                        "GCP or Alibaba zone, and Alibaba image. These are never copied.",
+                        classes="hint",
+                    )
+                )
         elif self.page == len(self.targets) + 2:
             widgets = [
                 Static("When should the room open?", classes="heading"),
@@ -209,19 +238,32 @@ class DeploymentApp(App[dict]):
             config = self.config()
             table = Table(expand=True, box=None, padding=(0, 1))
             table.add_column("Target")
-            table.add_column("Role / provider")
+            table.add_column("Role / location", overflow="fold")
             table.add_column("Hostname", overflow="fold")
             for index, target in enumerate(self.targets):
                 gateway = self.topology == "shared" and index > 0
                 table.add_row(
                     Text(target["name"]),
-                    Text(("Gateway" if gateway else "Authority") + " / " + target["provider"]),
+                    Text(
+                        ("Gateway" if gateway else "Authority")
+                        + " / "
+                        + target["provider"]
+                        + (f" / {target['region']}" if target["provider"] != "ssh" else "")
+                    ),
                     Text(target["hostname"]),
                 )
             widgets = [
                 Static("Ready to save an offline plan", classes="heading"),
                 Static(table, id="review"),
                 Static(self.topology_note(), classes="hint", markup=False),
+                Collapsible(
+                    Static(
+                        "\n\n".join(deploy.recovery_warnings(config)),
+                        markup=False,
+                        id="recovery-warnings",
+                    ),
+                    title="Recovery gaps (not a failover plan)",
+                ),
                 Static(
                     "Automatic activation / HTTPS watcher"
                     if config["watch"]["urls"]

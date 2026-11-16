@@ -257,8 +257,9 @@ def test_duplicate_target_names_are_flagged_before_leaving_selection():
 
 
 @pytest.mark.parametrize("topology", ["shared", "independent"])
+@pytest.mark.parametrize("override_region", [False, True])
 def test_repeated_aws_targets_render_separate_regions_and_state(
-    key, tmp_path, monkeypatch, topology
+    key, tmp_path, monkeypatch, topology, override_region
 ):
     monkeypatch.setattr(
         deployment, "_command", lambda *a, **kw: pytest.fail("Planner must stay offline")
@@ -276,19 +277,38 @@ def test_repeated_aws_targets_render_separate_regions_and_state(
             await pilot.press("alt+right")
             for name, region, resource in (
                 ("aws-1", "eu-west-1", "123abc"),
-                ("aws-2", "us-east-1", "456def"),
+                ("aws-2", "us-east-1" if override_region else "eu-central-1", "456def"),
             ):
                 assert app.query_one("#field-name", Input).value == name
+                assert app.query_one("#field-region", Input).value == (
+                    "" if name == "aws-1" else "eu-central-1"
+                )
+                assert app.query_one("#field-image", Input).value == ""
+                assert app.query_one("#field-vpc_id", Input).value == ""
+                assert app.query_one("#field-subnet_id", Input).value == ""
                 fill(
                     app,
                     hostname=f"{name}.example.org",
-                    region=region,
+                    **({"region": region} if name == "aws-1" or override_region else {}),
                     image=f"ami-{resource}",
                     vpc_id=f"vpc-{resource}",
                     subnet_id=f"subnet-{resource}",
                 )
                 await pilot.press("alt+right")
+            await pilot.press("alt+left")
+            assert app.query_one("#field-region", Input).value == (
+                "us-east-1" if override_region else "eu-central-1"
+            )
+            assert app.query_one("#field-image", Input).value == "ami-456def"
             await pilot.press("alt+right")
+            await pilot.press("alt+right")
+            warnings = str(app.query_one("#recovery-warnings", Static).render())
+            assert "RTO/RPO" in warnings
+            assert (
+                "only database authority" in warnings
+                if topology == "shared"
+                else "not recovery copies" in warnings
+            )
             await pilot.click("#next")
         return app.return_value
 
@@ -297,13 +317,44 @@ def test_repeated_aws_targets_render_separate_regions_and_state(
     deployment.render(config, output)
     for name, region, role in (
         ("aws-1", "eu-west-1", "primary"),
-        ("aws-2", "us-east-1", "gateway" if topology == "shared" else "primary"),
+        (
+            "aws-2",
+            "us-east-1" if override_region else "eu-central-1",
+            "gateway" if topology == "shared" else "primary",
+        ),
     ):
         directory = output / name
         assert json.loads((directory / "terraform.tfvars.json").read_text())["region"] == region
         assert json.loads((directory / "deployment.json").read_text())["role"] == role
         assert (directory / "main.tf").is_file()
     assert len({target["name"] for target in config["targets"]}) == 2
+
+
+def test_tui_review_warns_about_explicit_same_region_targets(key):
+    async def exercise():
+        app = DeploymentApp()
+        async with app.run_test(size=(60, 20)) as pilot:
+            for index in range(2):
+                await choose(app, pilot, "aws")
+                app.targets[index].update(
+                    hostname=f"room{index}.example.org",
+                    region="eu-west-1",
+                    image=f"ami-{index}abc",
+                    vpc_id=f"vpc-{index}abc",
+                    subnet_id=f"subnet-{index}abc",
+                )
+            app.settings.update(ssh_key=str(key), ssh_cidr="203.0.113.1/32")
+            app.page = 5
+            await app.show_page()
+            warnings = str(app.query_one("#recovery-warnings", Static).render())
+            assert "aws-1, aws-2 share aws/eu-west-1" in warnings
+            assert app.query_one("#next").region.bottom <= 19
+            await pilot.press("alt+left")
+            await pilot.press("alt+left")
+            assert app.query_one("#field-region", Input).value == "eu-west-1"
+            await pilot.press("escape")
+
+    asyncio.run(exercise())
 
 
 def test_twenty_targets_keep_navigation_visible_and_reopen_empty_row_after_removal():

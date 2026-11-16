@@ -59,6 +59,128 @@ def arguments(tmp_path, config, *extra):
 
 
 @pytest.mark.parametrize(
+    ("provider", "anchor", "expected"),
+    [
+        ("aws", "eu-west-1", "eu-central-1"),
+        ("aws", "us-west-2", "us-east-1"),
+        ("aws", "ap-northeast-1", "ap-northeast-3"),
+        ("gcp", "europe-west1", "europe-west3"),
+        ("gcp", "us-central1", "us-east1"),
+        ("alibaba", "eu-central-1", "eu-west-2"),
+        ("alibaba", "us-east-1", "us-west-1"),
+    ],
+)
+def test_region_suggestions_separate_repeated_providers(provider, anchor, expected):
+    target = {"provider": provider}
+    others = [{"provider": provider, "region": anchor}]
+    before = copy.deepcopy((target, others))
+    assert deploy.suggest_region(target, others) == expected
+    assert (target, others) == before
+
+
+def test_region_suggestions_skip_used_regions_and_other_providers():
+    others = [
+        {"provider": "alibaba", "region": "eu-central-1"},
+        {"provider": "aws", "region": "eu-west-1"},
+        {"provider": "gcp", "region": "europe-west1"},
+        {"provider": "aws", "region": "eu-central-1"},
+    ]
+    assert deploy.suggest_region({"provider": "aws"}, others) == "eu-west-3"
+    assert deploy.suggest_region({"provider": "gcp"}, others) == "europe-west3"
+
+
+@pytest.mark.parametrize(
+    ("target", "others"),
+    [
+        ({"provider": "aws"}, []),
+        ({"provider": "aws"}, [{"provider": "gcp", "region": "us-central1"}]),
+        ({"provider": "aws"}, [{"provider": "aws", "region": "eu-west-2"}]),
+        ({"provider": "aws"}, [{"provider": "aws", "region": "us-gov-west-1"}]),
+        ({"provider": "aws"}, [{"provider": "aws", "region": "future-region-1"}]),
+        (
+            {"provider": "gcp"},
+            [
+                {"provider": "gcp", "region": "europe-west1"},
+                {"provider": "gcp", "region": "europe-west3"},
+            ],
+        ),
+        (
+            {"provider": "aws", "region": "eu-west-1"},
+            [{"provider": "aws", "region": "eu-west-1"}],
+        ),
+        ({"provider": "ssh"}, [{"provider": "ssh"}]),
+    ],
+)
+def test_region_suggestions_never_guess_cross_boundary_or_relocate(target, others):
+    assert deploy.suggest_region(target, others) == ""
+
+
+@pytest.mark.parametrize(
+    ("provider", "field", "value", "region"),
+    [
+        ("aws", "image", "ami-123abc", "eu-west-1"),
+        ("aws", "vpc_id", "vpc-123abc", "eu-west-1"),
+        ("aws", "subnet_id", "subnet-123abc", "eu-west-1"),
+        ("gcp", "zone", "europe-west1-b", "europe-west1"),
+        ("alibaba", "zone", "eu-central-1a", "eu-central-1"),
+        ("alibaba", "image", "ubuntu_24_04", "eu-central-1"),
+    ],
+)
+def test_region_suggestions_do_not_reuse_location_bound_resources(provider, field, value, region):
+    assert (
+        deploy.suggest_region(
+            {"provider": provider, field: value}, [{"provider": provider, "region": region}]
+        )
+        == ""
+    )
+
+
+@pytest.mark.parametrize("topology", ["shared", "independent"])
+def test_saved_plan_reports_recovery_risks_without_relocating(config, tmp_path, capsys, topology):
+    config["topology"] = topology
+    for index, target in enumerate(config["targets"]):
+        target.pop("host")
+        target.update(
+            provider="aws",
+            region="eu-west-1",
+            image=f"ami-{index}abc",
+            vpc_id=f"vpc-{index}abc",
+            subnet_id=f"subnet-{index}abc",
+        )
+    args = arguments(tmp_path, config, "--non-interactive", "--plan")
+    assert deploy.run_deployment(args) == 0
+    output = capsys.readouterr().out
+    assert "primary, secondary share aws/eu-west-1" in output
+    assert "RTO/RPO" in output
+    assert (
+        "only database authority" in output
+        if topology == "shared"
+        else "not recovery copies" in output
+    )
+    saved = json.loads((args.output / "config.json").read_text())
+    assert [target["region"] for target in saved["targets"]] == ["eu-west-1", "eu-west-1"]
+    for target in saved["targets"]:
+        variables = json.loads((args.output / target["name"] / "terraform.tfvars.json").read_text())
+        assert variables["region"] == "eu-west-1"
+        assert variables["image"] == target["image"]
+
+
+def test_recovery_review_does_not_confuse_providers_or_claim_ssh_separation():
+    config = {
+        "topology": "shared",
+        "targets": [
+            {"provider": "aws", "name": "primary", "region": "eu-central-1"},
+            {"provider": "alibaba", "name": "gateway", "region": "eu-central-1"},
+            {"provider": "ssh", "name": "onprem"},
+        ],
+    }
+    warnings = deploy.recovery_warnings(config)
+    assert not any(" share " in warning for warning in warnings)
+    assert any("SSH failure domains are unknown" in warning for warning in warnings)
+    assert any("only database authority" in warning for warning in warnings)
+
+
+@pytest.mark.parametrize(
     ("provider", "fields"),
     [
         (

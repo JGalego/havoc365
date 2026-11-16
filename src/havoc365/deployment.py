@@ -12,7 +12,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
-from collections.abc import Collection
+from collections.abc import Collection, Mapping, Sequence
 from importlib.resources import files
 from pathlib import Path
 from string import Template
@@ -39,8 +39,82 @@ DEFAULTS = {
     "alibaba": {"instance_type": "ecs.t6-c1m1.large"},
     "ssh": {},
 }
+# Country/EU groups, not a sovereignty or capacity guarantee. Sources: deploy/README.md.
+REGION_GROUPS = {
+    "aws": (
+        ("eu-west-1", "eu-central-1", "eu-west-3", "eu-north-1"),
+        ("us-east-1", "us-east-2", "us-west-2", "us-west-1"),
+        ("ap-northeast-1", "ap-northeast-3"),
+        ("ap-south-1", "ap-south-2"),
+        ("ap-southeast-2", "ap-southeast-4"),
+        ("ca-central-1", "ca-west-1"),
+    ),
+    "gcp": (
+        ("europe-west1", "europe-west3"),
+        ("us-central1", "us-east1"),
+    ),
+    "alibaba": (
+        ("eu-central-1", "eu-west-2"),
+        ("us-east-1", "us-west-1"),
+        ("cn-hangzhou", "cn-shanghai", "cn-beijing"),
+    ),
+}
 _LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z")
 _VALUE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,254}\Z")
+
+
+def suggest_region(target: Mapping[str, str], others: Sequence[Mapping[str, str]]) -> str:
+    provider = target["provider"]
+    bound_fields = {
+        "aws": ("image", "vpc_id", "subnet_id"),
+        "gcp": ("zone",),
+        "alibaba": ("zone", "image"),
+    }
+    if target.get("region") or any(target.get(key) for key in bound_fields.get(provider, ())):
+        return ""
+    used = [
+        other["region"] for other in others if other["provider"] == provider and other.get("region")
+    ]
+    if not used:
+        return ""
+    for group in REGION_GROUPS.get(provider, ()):
+        if used[0] in group:
+            return next((region for region in group if region not in used), "")
+    return ""
+
+
+def recovery_warnings(config: dict) -> list[str]:
+    targets = config["targets"]
+    warnings = [
+        f"{targets[0]['name']} is the only database authority. Other regions/providers do not "
+        "protect its data or provide failover; arrange off-site backups and a restore procedure."
+        if config["topology"] == "shared"
+        else "Independent rooms do not synchronize data or access. They are not recovery copies; "
+        "decide which URL people should use during an outage."
+    ]
+    locations: dict[tuple[str, str], list[str]] = {}
+    for target in targets:
+        provider = target["provider"]
+        if provider == "ssh":
+            continue
+        locations.setdefault((provider, target["region"]), []).append(target["name"])
+    for (provider, region), names in locations.items():
+        if len(names) > 1:
+            warnings.append(
+                f"{', '.join(names)} share {provider}/{region}. A regional outage can affect "
+                "all of them; choose distinct regions unless this placement is deliberate."
+            )
+    if any(target["provider"] == "ssh" for target in targets):
+        warnings.append(
+            "SSH failure domains are unknown. Verify independent sites, power, network and "
+            "storage; different host addresses do not establish separation."
+        )
+    warnings.append(
+        "Not checked: recovery time/data-loss objectives (RTO/RPO), off-site backup freshness, "
+        "restore tests, DNS and recovery credentials independent of Microsoft 365. "
+        "Arrange and rehearse these before relying on recovery."
+    )
+    return warnings
 
 
 def configure_parser(boats: argparse._SubParsersAction) -> None:
@@ -809,7 +883,8 @@ def run_deployment(args: argparse.Namespace) -> int:
                             " / gateway"
                             if config["topology"] == "shared" and index
                             else " / authority"
-                        ),
+                        )
+                        + (f" / {target['region']}" if target["provider"] != "ssh" else ""),
                         f"https://{target['hostname']} / "
                         + (
                             "forwarded"
@@ -822,6 +897,8 @@ def run_deployment(args: argparse.Namespace) -> int:
                     for index, target in enumerate(config["targets"])
                 ],
             )
+            for warning in recovery_warnings(config):
+                print(f"Recovery warning: {warning}")
         print(f"Saved private, credential-free plan: {args.output / 'config.json'}")
         if args.config:
             print(

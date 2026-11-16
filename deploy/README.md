@@ -8,7 +8,7 @@ Two AWS targets become `aws-1` and `aws-2` by default, with separate region, ima
 
 Tab and Shift+Tab move between controls; **Back**/**Next** or Alt+Left/Alt+Right navigate the forms without losing answers. The progress strip tracks Targets, Access, Hosts, Activation and Review. Invalid fields show an inline error. Source options are collapsed by default. Esc closes an open selector, otherwise cancels without writing a plan; Ctrl+Q or **Cancel** also exits.
 
-The review lists each target's provider, authority/gateway role, hostname and automatic/manual activation. **Save plan** returns to the shell and writes the local plan; it never starts deployment by itself. The full-screen app restores the terminal when it exits. Use at least a 60-column, 20-row terminal; long forms scroll while navigation stays visible. `NO_COLOR` is respected.
+The review lists each target's provider, region, authority/gateway role, hostname and automatic/manual activation. Expand **Recovery gaps (not a failover plan)** for regional concentration and recovery warnings. **Save plan** returns to the shell and writes the local plan; it never starts deployment by itself. The full-screen app restores the terminal when it exits. Use at least a 60-column, 20-row terminal; long forms scroll while navigation stays visible. `NO_COLOR` is respected.
 
 Saved `--config` commands bypass the TUI and keep plain output when redirected. A missing interactive input/output terminal or `TERM=dumb` requires `--config`; the planner never starts a broken screen or falls back to another prompt sequence.
 
@@ -51,6 +51,48 @@ If you chose a custom `--output`, keep using it for check/apply so that the same
 **Independent** runs a server and database on each target. Rooms have separate people, invites, contacts, messages and recovery secrets. Nothing synchronizes. Activate each room separately. Decide ahead of time which URL people should use.
 
 Every public hostname has host-local cookie sessions; there is no cross-domain SSO. Issue invitations from the URL recipients should use. Gateway Caddy checks the incoming browser Origin against its own public HTTPS origin before rewriting Host and Origin for the primary's CSRF checks. Foreign or `null` origins are rejected. The upstream must be a public HTTPS origin, never an IP, credential URL, path, query or private service. TLS verification is never disabled. Direct access to port 8080 is loopback-only. Do not add a generic proxy that blindly rewrites Origin or permits cross-origin cookies. Caddy access logging is not enabled.
+
+## Recovery placement
+
+The planner suggests regions offline; it does not discover capacity or enable regions in your account. Choose the first region for each cloud provider on its Hosts form. On opening a later target's form, an unset region gets the first unused entry in the same supported group. Interleaving providers does not change the allocation. For example:
+
+```text
+aws-1   eu-west-1       chosen by you
+aws-2   eu-central-1    suggested
+aws-3   eu-west-3       suggested
+aws-4   eu-north-1      suggested
+aws-5                  choose manually; no wraparound
+```
+
+Suggestions are editable. Back navigation preserves assigned regions and other answers; removing a target frees its region for a later unset target. Explicit regions are never rewritten, including when you change an earlier region or load saved JSON. Saved-config plan/check/apply never makes placement decisions.
+
+The curated groups are:
+
+| Provider | Country/EU groups, in suggestion order |
+|---|---|
+| AWS | EU: `eu-west-1`, `eu-central-1`, `eu-west-3`, `eu-north-1`; US: `us-east-1`, `us-east-2`, `us-west-2`, `us-west-1`; Japan: `ap-northeast-1`, `ap-northeast-3`; India: `ap-south-1`, `ap-south-2`; Australia: `ap-southeast-2`, `ap-southeast-4`; Canada: `ca-central-1`, `ca-west-1` |
+| GCP | EU: `europe-west1`, `europe-west3`; US: `us-central1`, `us-east1` |
+| Alibaba Cloud | EU: `eu-central-1`, `eu-west-2`; US: `us-east-1`, `us-west-1`; mainland China: `cn-hangzhou`, `cn-shanghai`, `cn-beijing` |
+
+These are convenience groups, not compliance guarantees. EU suggestions can cross national borders. Review the actual countries, residency requirements, account access, pricing, latency and quotas before applying. Unsupported or exhausted groups leave the region for you to choose; the planner does not guess another country or cross AWS commercial/GovCloud/China partitions. Regions outside these groups remain valid manual choices.
+
+AWS AMIs, VPCs and subnets must belong to the selected region. GCP and Alibaba zones, and Alibaba images, also need location-specific choices. The planner never copies these fields between targets and will not fill a missing region when its draft already contains region-bound resources. It does not choose zones or verify availability offline; the provider plan checks compatibility on explicit check/apply. Region names and selection constraints come from the official [AWS region list](https://docs.aws.amazon.com/global-infrastructure/latest/regions/aws-regions.html), [GCP regions and zones](https://cloud.google.com/compute/docs/regions-zones) and [Alibaba ECS regions and zones](https://www.alibabacloud.com/help/en/ecs/user-guide/regions-and-zones).
+
+Review warns when same-provider targets share a region; that can be intentional for a multi-zone design, so it is not blocked. AWS's subnet determines its zone, and two subnets are not proof of two zones. SSH hosts have unknown failure domains: verify separate sites, power, network and storage yourself. Different providers or IP addresses do not prove physical independence. These warnings also appear with saved-config plan/check/apply.
+
+### Prepare recovery, not just placement
+
+AWS's [Disaster Recovery of Workloads on AWS: Recovery in the Cloud](https://docs.aws.amazon.com/whitepapers/latest/disaster-recovery-workloads-on-aws/disaster-recovery-workloads-on-aws.html) describes backup-and-restore, pilot light, warm standby and multi-site active/active. Its [strategy comparison](https://docs.aws.amazon.com/whitepapers/latest/disaster-recovery-workloads-on-aws/disaster-recovery-options-in-the-cloud.html) requires recoverable data and infrastructure, not merely machines in another region. The [Well-Architected Reliability guidance](https://docs.aws.amazon.com/wellarchitected/latest/reliability-pillar/plan-for-disaster-recovery-dr.html) starts with business recovery objectives and requires testing.
+
+Lifeboat currently supports the building blocks for an operator-managed **backup-and-restore** procedure. Shared gateways are neither warm standby nor active/active. Before relying on it:
+
+1. Set a recovery time objective (RTO: acceptable downtime) and recovery point objective (RPO: acceptable data loss). Measure a restore against them; no RTO/RPO is promised by deployment.
+2. Schedule consistent backups with retention. Copy them encrypted to another failure domain and protect the recovery environment, source pin, deployment config and infrastructure state separately. The deployment does not schedule or ship backups.
+3. Keep recovery access to DNS, hosting, backups and the contact roster independent of Microsoft 365. Consider account compromise as well as regional outages; separate regions in one compromised account are not enough.
+4. Prepare recovery-region images, networking, credentials, quotas and DNS/gateway changes while the primary is healthy. Pre-provision what your RTO needs; creating everything during an outage depends on provider control planes and package repositories.
+5. Rehearse the [restore procedure](#backup-and-restore) on an isolated recovery host, including fencing the old authority, restoring files and people, signing in, sending a message and directing users to the recovery URL. Record actual downtime and data loss, then repeat after relevant changes.
+
+No automatic promotion, database replication, backup shipping, independent-account provisioning or DNS failover is installed. Adding regions improves placement diversity; it does not close these recovery gaps.
 
 ## Before apply
 

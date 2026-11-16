@@ -204,6 +204,8 @@ By default it writes an offline plan, not infrastructure. Review the generated f
 
 Choosing a provider creates a named target and a new empty row—no Add button. Choose the same provider again for another host: `aws-1` and `aws-2`, for example, have separate regions, VM settings, hostnames and deployment state. Rename targets in place; the planner shows which is the authority and which are gateways. In shared mode, two AWS targets are one authority and one gateway, not database replicas. In independent mode, each runs its own room.
 
+Choose the first region for each cloud provider. Later targets get editable suggestions for unused regions within a supported country/EU group: AWS `eu-west-1` then `eu-central-1`, for example. The planner never relocates an explicit region, copies region-specific image/network IDs or wraps around when suggestions run out. The review shows regions and warns about regional concentration and recovery gaps; saved JSON keeps exactly the regions you specified. Check residency, pricing and capacity before applying. See [placement rules and recovery preparation](deploy/README.md#recovery-placement).
+
 Tab moves between controls; **Back** preserves your answers, and invalid fields show an inline error. Esc cancels without saving. The final **Save plan** screen reviews roles, hostnames and activation without starting deployment. The TUI needs an interactive terminal; scripts and redirected output use `--config` instead.
 
 To check a saved plan without installing anything:
@@ -217,6 +219,8 @@ havoc365 lifeboat deploy --config deploy/generated/config.json --check
 Enter explicit HTTPS probe URLs to install a supervised watcher that opens the room when those endpoints fail. Leave them blank for manual-only activation. Deployment does not enable SMS or send invitations; the paid, opt-in roster workflow is described below.
 
 **Shared** uses one authoritative server and HTTPS gateways: every URL sees the same room, but the primary is still a single point of failure. This is shared state, not replicated databases or automatic failover. **Independent** gives each target its own room and access. See the [deployment runbook](deploy/README.md) and [architectures as Mermaid code](deploy/architectures.md) for AWS, GCP, Alibaba Cloud and on-prem configurations.
+
+AWS's [Disaster Recovery of Workloads on AWS](https://docs.aws.amazon.com/whitepapers/latest/disaster-recovery-workloads-on-aws/disaster-recovery-workloads-on-aws.html) is the whitepaper behind this guidance. For Lifeboat, prepare and rehearse backup-and-restore: set acceptable downtime and data loss, keep encrypted backups outside the authority's failure domain, and test recovery without Microsoft sign-in. Regional diversity alone does not provide that recovery.
 
 Start with one always-on Linux VPS outside Microsoft, persistent storage, Caddy HTTPS and an unprivileged systemd service. Lifeboat listens on `127.0.0.1:8080`; never expose that HTTP port directly. For example:
 
