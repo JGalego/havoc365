@@ -8,7 +8,7 @@ havoc365 is a Python CLI that maps a Microsoft 365 tenant's dependencies and run
 - Use uv for everything (`uv run`, `uv add`). Code must run on Python 3.12.
 - Comments explain why. Don't narrate what the code does or what you changed, and delete dead or commented-out code.
 - Error messages say what failed and what to do next, such as the missing permission or role.
-- havoc365 talks only to Microsoft Graph and DNS. Its only tenant writes are the drill's Conditional Access policy and session revocation. Ask before adding writes, Graph scopes or other network calls.
+- Tenant operations use Microsoft Graph and DNS. `watch` also probes explicitly configured HTTPS URLs and uses Twilio only with `--sms`. Its only tenant writes are the drill's Conditional Access policy and session revocation. Ask before adding writes, Graph scopes or other network integrations.
 - Graph fails in the ways this tool prepares people for. Handle 429 (honour `Retry-After`), 5xx, timeouts and paging. If a drill can't revert, retry, then tell the user exactly what's still in the tenant.
 - Never start a drill, with `drill run` or a live test, unless the user asks you to in the current conversation.
 

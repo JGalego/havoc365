@@ -103,6 +103,24 @@ This is export analysis, not automatic tenant-wide flow discovery. [Teams Workfl
 | `havoc365 drill run` | Locks a pilot group out of Microsoft 365 until the timer ends | Adds one Conditional Access policy |
 | `havoc365 drill revert` | Ends a drill early | Removes that policy |
 | `havoc365 drill report` | Reports sign-in attempts during the drill | No |
+| `havoc365 watch` | Probes configured HTTPS URLs and optionally sends outage/recovery SMS | No |
+
+## Watching for outages
+
+Run the watcher on a machine outside Microsoft's network. It doesn't need a tenant login:
+
+```sh
+havoc365 watch --url https://outlook.office.com/owa/ --interval 60
+havoc365 watch --url https://outlook.office.com/owa/ --once
+```
+
+Repeat `--url` for more endpoints. HTTP 2xx/3xx responses count as reachable; redirects aren't followed. Timeouts and other status codes count as failures. This tests endpoint reachability, not email delivery or authenticated access. Choose URLs that represent your own service paths.
+
+An outage starts after three consecutive failed checks; recovery needs two successful checks. Change these with `--failures` and `--recoveries`. State survives restarts. `--once` exits nonzero if any endpoint fails, regardless of the alert threshold.
+
+For SMS, set `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER` and `TWILIO_TO_NUMBER` in the watcher's environment, then add `--sms`. Numbers must use E.164 format. SMS is paid and opt-in; without that flag the watcher only prints results. Each state change submits one message through the [Twilio Messages API](https://www.twilio.com/docs/messaging/api/message-resource). API acceptance doesn't guarantee delivery.
+
+An interrupted or ambiguous SMS submission isn't automatically replayed. The error identifies the watch state file: check Twilio's message logs before removing that one file and restarting. Keep provider credentials out of shell history and version control.
 
 ## Drills
 

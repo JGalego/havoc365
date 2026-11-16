@@ -10,6 +10,7 @@ from havoc365.graph import Graph
 from havoc365.mapping import MapReport, map_tenant
 from havoc365.storage import state_dir, write_private
 from havoc365.ui import UI
+from havoc365.watch import watch
 from havoc365.workflows import add_workflows
 
 
@@ -44,6 +45,27 @@ def parser() -> argparse.ArgumentParser:
         command.add_argument("--duration", default="30m")
     drills.add_parser("revert")
     drills.add_parser("report")
+    monitor = commands.add_parser(
+        "watch", help="Probe service URLs without relying on Microsoft-hosted monitoring"
+    )
+    monitor.add_argument(
+        "--url", action="append", required=True, help="HTTPS endpoint to probe (repeatable)"
+    )
+    monitor.add_argument(
+        "--interval", type=float, default=60, help="Seconds between checks (default: 60)"
+    )
+    monitor.add_argument(
+        "--failures", type=int, default=3, help="Consecutive failures before an alert"
+    )
+    monitor.add_argument(
+        "--recoveries", type=int, default=2, help="Consecutive successes before recovery"
+    )
+    monitor.add_argument(
+        "--once", action="store_true", help="Check once and exit; nonzero if any probe fails"
+    )
+    monitor.add_argument(
+        "--sms", action="store_true", help="Enable paid SMS through configured Twilio credentials"
+    )
     return root
 
 
@@ -68,6 +90,17 @@ def main(argv: list[str] | None = None) -> int:
     graph: Graph | None = None
     previous_handler = None
     try:
+        if args.command == "watch":
+            return watch(
+                args.url,
+                state_dir(),
+                interval=args.interval,
+                failures=args.failures,
+                recoveries=args.recoveries,
+                once=args.once,
+                sms=args.sms,
+                announce=ui.message,
+            )
         if args.command == "map" and args.exports_only:
             if not args.flows:
                 raise HavocError("--exports-only requires at least one --flows JSON/ZIP export.")
