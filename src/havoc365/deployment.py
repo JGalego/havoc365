@@ -12,12 +12,14 @@ import shutil
 import subprocess
 import sys
 import tarfile
+from collections.abc import Callable, Collection
 from importlib.resources import files
 from pathlib import Path
 from string import Template
 from urllib.parse import urlsplit
 
 from havoc365.errors import HavocError
+from havoc365.ui import UI
 
 ASSETS = Path(str(files("havoc365").joinpath("deploy_assets")))
 PROVIDERS = ("aws", "gcp", "alibaba", "ssh")
@@ -42,7 +44,18 @@ _VALUE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,254}\Z")
 
 
 def configure_parser(boats: argparse._SubParsersAction) -> None:
-    deploy = boats.add_parser("deploy", help="Plan or install Lifeboat on cloud VMs or SSH hosts")
+    deploy = boats.add_parser(
+        "deploy",
+        help="Plan, check or install Lifeboat on cloud VMs or SSH hosts",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Default: guided offline plan; q cancels any wizard prompt.\n"
+            "  --config deploy/generated/config.json --check\n"
+            "      Read-only SSH checks and cloud planning; no installation.\n"
+            "  --config deploy/generated/config.json --apply\n"
+            "      Check every target, then provision/install after explicit APPLY approval."
+        ),
+    )
     deploy.add_argument("--config", type=Path, help="Validated saved deployment JSON; no secrets")
     deploy.add_argument("--output", type=Path, default=Path("deploy/generated"))
     deploy.add_argument(
@@ -56,6 +69,11 @@ def configure_parser(boats: argparse._SubParsersAction) -> None:
         "--plan", action="store_true", help="Render locally without network (default)"
     )
     mode.add_argument(
+        "--check",
+        action="store_true",
+        help="Run read-only SSH/cloud pre-flight; may contact providers, never installs",
+    )
+    mode.add_argument(
         "--apply", action="store_true", help="Provision and install; may incur charges"
     )
     deploy.add_argument("--confirm", choices=["APPLY"], help="Explicit automation approval")
@@ -64,39 +82,110 @@ def configure_parser(boats: argparse._SubParsersAction) -> None:
     )
 
 
-def _ask(prompt: str, default: str = "") -> str:
-    value = input(f"{prompt}{f' [{default}]' if default else ''}: ").strip()
-    return value or default
+def _ask(prompt: str, default: str = "", *, check: Callable[[str], object] | None = None) -> str:
+    while True:
+        value = input(f"{prompt}{f' [{default}]' if default else ''}: ").strip() or default
+        if value.casefold() in {"q", "quit"}:
+            raise KeyboardInterrupt
+        try:
+            if check:
+                check(value)
+            return value
+        except HavocError as error:
+            print(f"Try again: {error}")
+
+
+def _providers(value: str) -> list[str]:
+    choices = {str(index): provider for index, provider in enumerate(PROVIDERS, 1)}
+    selected = [choices.get(item, item) for item in re.split(r"[,\s]+", value.lower())]
+    if not 1 <= len(selected) <= 20 or any(item not in PROVIDERS for item in selected):
+        raise HavocError(
+            "Unknown target. Choose 1-4 or aws, gcp, alibaba, ssh; separate with commas."
+        )
+    return selected
 
 
 def wizard() -> dict:
+    ui = UI()
+    ui.table(
+        "Lifeboat deployment / 1. Targets",
+        ("Choice", "Provider", "Uses"),
+        [
+            ("1", "AWS", "Dedicated EC2 VM"),
+            ("2", "GCP", "Dedicated Compute Engine VM"),
+            ("3", "Alibaba Cloud", "Dedicated ECS VM"),
+            ("4", "SSH", "Existing cloud/on-prem Ubuntu host"),
+        ],
+    )
     print("Targets: AWS, GCP, Alibaba Cloud, existing Linux cloud/on-prem SSH hosts.")
     print("Use dedicated Ubuntu 24.04 hosts with passwordless sudo and persistent storage.")
-    print("No changes by default. DNS and trusted SSH host keys must be prepared before apply.")
-    selected = _ask("Choose one or more targets (aws,gcp,alibaba,ssh)", "ssh").lower().split(",")
-    if not selected or any(value.strip() not in PROVIDERS for value in selected):
-        raise HavocError("Unknown target. Choose aws, gcp, alibaba or ssh, separated by commas.")
-    topology = _ask("Topology (shared / independent)", "shared")
+    print("Offline plan by default. Enter q to cancel; Enter keeps the displayed default.")
+    selected = _providers(
+        _ask(
+            "Targets (numbers or names; repeat a provider for more nodes)", "ssh", check=_providers
+        )
+    )
+
+    def topology_choice(value: str) -> None:
+        if value.lower() not in ("shared", "independent"):
+            raise HavocError("Choose shared or independent.")
+
+    topology = _ask("Topology (shared / independent)", "shared", check=topology_choice).lower()
     print(
         "Shared: first target owns the only SQLite database; others are HTTPS gateways. "
         "Primary outage stops all rooms; this is NOT replication or HA."
         if topology == "shared"
         else "Independent: each target owns its people, invitations, messages and recovery keys."
     )
-    key = _ask("Local SSH private key path", "~/.ssh/id_ed25519")
-    cidr = _ask("Your SSH access CIDR (IPv4, e.g. 203.0.113.10/32)")
-    repository = _ask("Public HTTPS Git repository", DEFAULT_REPOSITORY)
-    ref = _ask("Git ref (main is mutable; prefer a reviewed commit SHA)", "main")
+
+    def key_check(value: str) -> None:
+        path = _key_path(value)
+        if any(provider != "ssh" for provider in selected):
+            _public_key(path)
+
+    ui.message("\n2. Access and source")
+    key = _ask("Local SSH private key path", "~/.ssh/id_ed25519", check=key_check)
+    cidr = _ask("Your SSH access CIDR (IPv4, e.g. 203.0.113.10/32)", check=_cidr)
+    repository = _ask("Public HTTPS Git repository", DEFAULT_REPOSITORY, check=_repository)
+    ref = _ask("Git ref (main is mutable; prefer a reviewed commit SHA)", "main", check=_ref)
     targets = []
-    for index, provider in enumerate(map(str.strip, selected), 1):
+    names: set[str] = set()
+    hostnames: set[str] = set()
+    endpoints: set[tuple[str, int]] = set()
+    for index, provider in enumerate(selected, 1):
+        ui.message(f"\n3. Target {index}/{len(selected)} / {provider}")
         target = {"provider": provider, **DEFAULTS[provider]}
-        target["name"] = _ask(f"Target {index} name", f"lifeboat-{index}")
-        target["hostname"] = _ask("Public DNS hostname (no scheme)")
-        target["ssh_user"] = _ask("SSH user", "root" if provider == "alibaba" else "ubuntu")
+        target["name"] = _ask(
+            f"Target {index} name", f"lifeboat-{index}", check=lambda value: _name(value, names)
+        )
+        names.add(target["name"])
+        target["hostname"] = _ask(
+            "Public DNS hostname (no scheme)",
+            check=lambda value: _hostname(value, "Public hostname", used=hostnames),
+        )
+        hostnames.add(target["hostname"])
+        target["ssh_user"] = _ask(
+            "SSH user", "root" if provider == "alibaba" else "ubuntu", check=_user
+        )
+        if provider == "ssh":
+            target["ssh_port"] = int(_ask("SSH port", "22", check=_port))
+        port = target.get("ssh_port", 22)
         for field in FIELDS[provider]:
-            target[field] = _ask(f"{provider} {field}", target.get(field, ""))
+            target[field] = _ask(
+                f"{provider} {field}",
+                target.get(field, ""),
+                check=lambda value, field=field, provider=provider, port=port: _field(
+                    value, field, provider, port=port, endpoints=endpoints
+                ),
+            )
+        if provider == "ssh":
+            endpoints.add((target["host"], port))
         targets.append(target)
-    urls = _ask("HTTPS probe URLs (space-separated; blank = manual-only, NOT automatic)").split()
+    ui.message("\n4. Activation")
+    urls = _ask(
+        "HTTPS probe URLs (space-separated; blank = manual-only, NOT automatic)",
+        check=lambda value: _watch_config({"urls": value.split()}),
+    ).split()
     print(
         "Install a supervised watcher on each authority; no SMS or invite delivery. "
         "A separate monitoring machine avoids sharing the authority's failure domain."
@@ -115,7 +204,7 @@ def wizard() -> dict:
     }
 
 
-def _hostname(value: object, label: str, *, public: bool = True) -> str:
+def _hostname(value: object, label: str, *, public: bool = True, used: Collection[str] = ()) -> str:
     if not isinstance(value, str) or len(value) > 253:
         raise HavocError(f"{label} must be a DNS hostname.")
     if value != value.lower() or not all(_LABEL.fullmatch(part) for part in value.split(".")):
@@ -130,6 +219,94 @@ def _hostname(value: object, label: str, *, public: bool = True) -> str:
         or value.endswith((".localhost", ".local", ".internal", ".invalid", ".test"))
     ):
         raise HavocError(f"{label} needs a public DNS name for HTTPS, not an IP or local name.")
+    if value in used:
+        raise HavocError(f"{label} is already used by another target. Choose a unique hostname.")
+    return value
+
+
+def _name(value: object, used: Collection[str] = ()) -> str:
+    if not isinstance(value, str) or not re.fullmatch(r"[a-z][a-z0-9-]{1,39}", value):
+        raise HavocError("Target name must be 2-40 lowercase letters, digits or hyphens.")
+    if value in used:
+        raise HavocError("Target names and public hostnames must be unique.")
+    return value
+
+
+def _key_path(value: object) -> Path:
+    if not isinstance(value, str) or not value or any(c in value for c in "\x00\r\n"):
+        raise HavocError("Set ssh_key to an existing local SSH private key path.")
+    path = Path(value).expanduser().resolve()
+    if not path.is_file():
+        raise HavocError(
+            "SSH private key is missing. Create a key with ssh-keygen and set ssh_key."
+        )
+    if path.stat().st_mode & 0o077:
+        raise HavocError("SSH private key permissions are too open. Run chmod 600 on the key.")
+    return path
+
+
+def _cidr(value: object) -> str:
+    try:
+        cidr = str(ipaddress.IPv4Network(value, strict=True))
+    except (ValueError, TypeError) as error:
+        raise HavocError(
+            "Set ssh_cidr to your SSH source IPv4 CIDR (for example 203.0.113.1/32)."
+        ) from error
+    if cidr == "0.0.0.0/0":
+        raise HavocError(
+            "Do not expose SSH to 0.0.0.0/0. Set ssh_cidr to your administration network."
+        )
+    return cidr
+
+
+def _repository(value: object) -> str:
+    if not isinstance(value, str) or not re.fullmatch(
+        r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?", value
+    ):
+        raise HavocError("Repository must be a public https://github.com/owner/repository URL.")
+    return value
+
+
+def _ref(value: object) -> str:
+    if not isinstance(value, str) or not _VALUE.fullmatch(value) or ".." in value:
+        raise HavocError(
+            "Git ref must be a branch, tag or commit SHA without shell metacharacters."
+        )
+    return value
+
+
+def _user(value: object) -> str:
+    if not isinstance(value, str) or not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", value):
+        raise HavocError("SSH user must be a Linux username, not an SSH option.")
+    return value
+
+
+def _port(value: str) -> None:
+    if not value.isascii() or not value.isdigit() or len(value) > 5 or not 1 <= int(value) <= 65535:
+        raise HavocError("SSH port must be 1-65535.")
+
+
+def _field(
+    value: object,
+    field: str,
+    provider: str,
+    *,
+    port: int = 22,
+    endpoints: Collection[tuple[str, int]] = (),
+) -> str:
+    if not isinstance(value, str) or not _VALUE.fullmatch(value) or ".." in value:
+        raise HavocError(f"Set a valid {field}; see deploy/README.md.")
+    if provider == "aws" and field in ("image", "vpc_id", "subnet_id"):
+        prefix = {"image": "ami", "vpc_id": "vpc", "subnet_id": "subnet"}[field]
+        if not re.fullmatch(rf"{prefix}-[0-9a-f]+", value):
+            raise HavocError(f"AWS {field} must be a real {prefix}-... resource ID.")
+    if provider == "ssh" and field == "host":
+        try:
+            ipaddress.IPv4Address(value)
+        except ValueError:
+            _hostname(value, "SSH host", public=False)
+        if (value, port) in endpoints:
+            raise HavocError("An existing SSH host/port can only run one target.")
     return value
 
 
@@ -240,36 +417,10 @@ def validate_config(raw: object) -> dict:
     if topology not in ("shared", "independent"):
         raise HavocError("Topology must be shared or independent.")
     watch = _watch_config(raw.get("watch", {}))
-    repository = raw.get("repository", DEFAULT_REPOSITORY)
-    if not isinstance(repository, str) or not re.fullmatch(
-        r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?", repository
-    ):
-        raise HavocError("Repository must be a public https://github.com/owner/repository URL.")
-    ref = raw.get("ref", "main")
-    if not isinstance(ref, str) or not _VALUE.fullmatch(ref) or ".." in ref:
-        raise HavocError(
-            "Git ref must be a branch, tag or commit SHA without shell metacharacters."
-        )
-    key = raw.get("ssh_key")
-    if not isinstance(key, str) or not key or any(c in key for c in "\x00\r\n"):
-        raise HavocError("Set ssh_key to an existing local SSH private key path.")
-    key_path = Path(key).expanduser().resolve()
-    if not key_path.is_file():
-        raise HavocError(
-            "SSH private key is missing. Create a key with ssh-keygen and set ssh_key."
-        )
-    if key_path.stat().st_mode & 0o077:
-        raise HavocError("SSH private key permissions are too open. Run chmod 600 on the key.")
-    try:
-        cidr = str(ipaddress.IPv4Network(raw.get("ssh_cidr", ""), strict=True))
-    except (ValueError, TypeError) as error:
-        raise HavocError(
-            "Set ssh_cidr to your SSH source IPv4 CIDR (for example 203.0.113.1/32)."
-        ) from error
-    if cidr == "0.0.0.0/0":
-        raise HavocError(
-            "Do not expose SSH to 0.0.0.0/0. Set ssh_cidr to your administration network."
-        )
+    repository = _repository(raw.get("repository", DEFAULT_REPOSITORY))
+    ref = _ref(raw.get("ref", "main"))
+    key_path = _key_path(raw.get("ssh_key"))
+    cidr = _cidr(raw.get("ssh_cidr", ""))
     targets = raw.get("targets")
     if not isinstance(targets, list) or not 1 <= len(targets) <= 20:
         raise HavocError("Configure between 1 and 20 deployment targets.")
@@ -285,38 +436,20 @@ def validate_config(raw: object) -> dict:
             "target",
         )
         item = {**DEFAULTS[provider], **target}
-        name = item.get("name")
-        if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9-]{1,39}", name):
-            raise HavocError("Target name must be 2-40 lowercase letters, digits or hyphens.")
-        hostname = _hostname(item.get("hostname"), "Public hostname")
-        if name in names or hostname in hostnames:
-            raise HavocError("Target names and public hostnames must be unique.")
+        name = _name(item.get("name"), names)
+        hostname = _hostname(item.get("hostname"), "Public hostname", used=hostnames)
         names.add(name)
         hostnames.add(hostname)
-        user = item.setdefault("ssh_user", "root" if provider == "alibaba" else "ubuntu")
-        if not isinstance(user, str) or not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", user):
-            raise HavocError("SSH user must be a Linux username, not an SSH option.")
+        _user(item.setdefault("ssh_user", "root" if provider == "alibaba" else "ubuntu"))
         port = item.setdefault("ssh_port", 22)
         if type(port) is not int or not 1 <= port <= 65535 or (provider != "ssh" and port != 22):
             raise HavocError("SSH port must be 1-65535; newly provisioned VMs use port 22.")
         for field in FIELDS[provider]:
-            value = item.get(field)
-            if not isinstance(value, str) or not _VALUE.fullmatch(value) or ".." in value:
-                raise HavocError(f"Set a valid {field} for target {name}; see deploy/README.md.")
+            _field(item.get(field), field, provider, port=port, endpoints=endpoints)
         if provider == "ssh":
             host = item["host"]
-            try:
-                ipaddress.IPv4Address(host)
-            except ValueError:
-                _hostname(host, "SSH host", public=False)
             endpoint = (host, port)
-            if endpoint in endpoints:
-                raise HavocError("An existing SSH host/port can only run one target.")
             endpoints.add(endpoint)
-        elif provider == "aws":
-            for field, prefix in (("image", "ami"), ("vpc_id", "vpc"), ("subnet_id", "subnet")):
-                if not re.fullmatch(rf"{prefix}-[0-9a-f]+", item[field]):
-                    raise HavocError(f"AWS {field} must be a real {prefix}-... resource ID.")
         clean.append(item)
     if any(item["provider"] != "ssh" for item in clean):
         _public_key(key_path)
@@ -460,7 +593,9 @@ def render(config: dict, output: Path, assets: Path = ASSETS) -> None:
     _write(saved, _json(config))
 
 
-def _command(argv: list[str], label: str, *, payload: bytes | None = None) -> bytes:
+def _command(
+    argv: list[str], label: str, *, payload: bytes | None = None, timeout: int = 3600
+) -> bytes:
     env = {
         key: value
         for key, value in os.environ.items()
@@ -469,7 +604,7 @@ def _command(argv: list[str], label: str, *, payload: bytes | None = None) -> by
     env.update(TF_INPUT="0", TF_IN_AUTOMATION="1", TF_LOG="OFF")
     try:
         result = subprocess.run(
-            argv, input=payload, capture_output=True, check=False, env=env, timeout=3600
+            argv, input=payload, capture_output=True, check=False, env=env, timeout=timeout
         )
     except (OSError, subprocess.TimeoutExpired) as error:
         raise HavocError(
@@ -486,14 +621,43 @@ def _command(argv: list[str], label: str, *, payload: bytes | None = None) -> by
 
 
 def preflight(config: dict) -> str | None:
-    if not shutil.which("ssh"):
-        raise HavocError("OpenSSH client is missing. Install openssh-client before --apply.")
+    rows = []
+    ssh = shutil.which("ssh")
+    rows.append(
+        (
+            "PASS" if ssh else "FAIL",
+            "OpenSSH",
+            ssh or "OpenSSH client is missing. Install openssh-client.",
+        )
+    )
+    engine = None
     if any(target["provider"] != "ssh" for target in config["targets"]):
         engine = shutil.which("tofu") or shutil.which("terraform")
         if not engine:
-            raise HavocError("Install OpenTofu (tofu) or Terraform before applying cloud targets.")
-        return engine
-    return None
+            rows.append(("FAIL", "Cloud engine", "Install OpenTofu (tofu) or Terraform 1.6+."))
+        else:
+            try:
+                version = json.loads(
+                    _command([engine, "version", "-json"], "Cloud engine version", timeout=30)
+                )
+                number = version["terraform_version"]
+                match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:[-+].*)?", number)
+                if not match or tuple(map(int, match.group(1, 2))) < (1, 6):
+                    raise ValueError
+                rows.append(("PASS", "Cloud engine", f"{engine}: {number}"))
+            except (ValueError, KeyError, TypeError) as error:
+                raise HavocError(
+                    "Cannot verify OpenTofu/Terraform 1.6+. Check the installed version."
+                ) from error
+    _check_results(rows, "Local pre-flight failed. Install the missing tools and rerun.")
+    return engine
+
+
+def _check_results(rows: list[tuple[str, str, str]], failure: str) -> None:
+    UI().table("Pre-flight", ("Status", "Check", "Details"), rows)
+    failures = [f"{label}: {detail}" for status, label, detail in rows if status == "FAIL"]
+    if failures:
+        raise HavocError(failure + "\n" + "\n".join(failures))
 
 
 def _bundle(directory: Path) -> bytes:
@@ -521,9 +685,15 @@ def _ssh(config: dict, target: dict, host: str) -> list[str]:
         "-o",
         "BatchMode=yes",
         "-o",
+        "IdentitiesOnly=yes",
+        "-o",
         "StrictHostKeyChecking=yes",
         "-o",
         "ConnectTimeout=15",
+        "-o",
+        "ServerAliveInterval=10",
+        "-o",
+        "ServerAliveCountMax=2",
         "-p",
         str(target["ssh_port"]),
         "-i",
@@ -532,38 +702,137 @@ def _ssh(config: dict, target: dict, host: str) -> list[str]:
     ]
 
 
+def _host_checks(config: dict, target: dict, host: str) -> list[tuple[str, str, str]]:
+    probe = b"""\
+if ( . /etc/os-release; [ "$ID" = ubuntu ] && [ "$VERSION_ID" = 24.04 ] ); then
+    printf 'PASS ubuntu\\n'
+else printf 'FAIL ubuntu\\n'; fi
+if python3 -c 'import sys; sys.exit(sys.version_info < (3, 12))' >/dev/null 2>&1; then
+    printf 'PASS python\\n'
+else printf 'FAIL python\\n'; fi
+if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
+    printf 'PASS systemd\\n'
+else printf 'FAIL systemd\\n'; fi
+if df -Pk /var/lib /opt | awk 'NR > 1 {n++; if ($4 < 1048576) bad=1} END {exit(n < 2 || bad)}'; then
+    printf 'PASS storage\\n'
+else printf 'FAIL storage\\n'; fi
+"""
+    result = _command(
+        [*_ssh(config, target, host), "sudo -n /bin/sh -s"],
+        f"{target['name']}: SSH host check (verify known_hosts, key and sudo -n first)",
+        payload=probe,
+        timeout=45,
+    )
+    descriptions = {
+        "ubuntu": "Dedicated Ubuntu 24.04 required",
+        "python": "Python 3.12+ required before bootstrap",
+        "systemd": "Booted systemd host required",
+        "storage": "1 GiB free on /var/lib and /opt required; durability not verified",
+    }
+    try:
+        lines = [line.split() for line in result.decode("ascii").splitlines()]
+        checks = {}
+        for line in lines:
+            if len(line) != 2 or line[0] not in ("PASS", "FAIL") or line[1] in checks:
+                raise ValueError
+            checks[line[1]] = line[0]
+        if set(checks) != set(descriptions):
+            raise ValueError
+    except (ValueError, UnicodeError) as error:
+        raise HavocError(
+            f"{target['name']}: cannot interpret SSH pre-flight output. "
+            "Check login banners and sudo on a private terminal; raw output was suppressed."
+        ) from error
+    return [
+        ("PASS", f"{target['name']}: SSH / sudo", f"Trusted-key, noninteractive access to {host}"),
+        *[
+            (checks[name], f"{target['name']}: {name}", description)
+            for name, description in descriptions.items()
+        ],
+    ]
+
+
+def _cloud_plan(target: dict, directory: Path, engine: str | None) -> str:
+    if engine is None:
+        raise HavocError("Install OpenTofu or Terraform before checking cloud targets.")
+    tf = [engine, f"-chdir={directory}"]
+    label = target["name"]
+    ui = UI()
+    with ui.working(f"{label}: reading cloud plan (no resource changes)..."):
+        _command([*tf, "init", "-input=false", "-no-color"], f"{label}: provider initialization")
+        _command([*tf, "validate", "-no-color"], f"{label}: template validation")
+        _command(
+            [*tf, "plan", "-input=false", "-no-color", "-out=deployment.tfplan"],
+            f"{label}: infrastructure plan",
+        )
+        try:
+            plan = json.loads(
+                _command([*tf, "show", "-json", "deployment.tfplan"], f"{label}: read plan")
+            )
+            changes = plan.get("resource_changes", [])
+            if not isinstance(changes, list) or plan.get("errored", False):
+                raise ValueError
+            counts = {"create": 0, "update": 0, "read": 0, "no-op": 0}
+            for change in changes:
+                actions = change["change"]["actions"]
+                if (
+                    not isinstance(actions, list)
+                    or not actions
+                    or not all(isinstance(action, str) for action in actions)
+                ):
+                    raise ValueError
+                if "delete" in actions:
+                    raise HavocError(
+                        f"{label}: would delete/replace resources. Refusing destructive apply. "
+                        "Back up the room and review migration manually."
+                    )
+                if set(actions) - {"no-op", "create", "read", "update"}:
+                    raise ValueError
+                for action in actions:
+                    counts[action] += 1
+        except (ValueError, AttributeError, KeyError, TypeError) as error:
+            raise HavocError(
+                f"{label}: cannot parse infrastructure plan. Inspect it before applying."
+            ) from error
+    return (
+        f"{counts['create']} create, {counts['update']} update, "
+        f"{counts['no-op']} unchanged; no delete/replace"
+    )
+
+
+def check_targets(config: dict, output: Path, engine: str | None) -> None:
+    rows = []
+    for target in config["targets"]:
+        try:
+            if target["provider"] == "ssh":
+                with UI().working(f"{target['name']}: checking SSH host (read-only)..."):
+                    rows.extend(_host_checks(config, target, target["host"]))
+            else:
+                summary = _cloud_plan(target, (output / target["name"]).resolve(), engine)
+                rows.append(("PASS", f"{target['name']}: cloud plan", summary))
+                rows.append(
+                    (
+                        "PENDING",
+                        f"{target['name']}: host",
+                        "SSH/OS/storage checks run after VM allocation, before any installation",
+                    )
+                )
+        except HavocError as error:
+            rows.append(("FAIL", target["name"], str(error)))
+    _check_results(rows, "Pre-flight failed. No infrastructure or hosts were changed.")
+    print("Pre-flight does not prove DNS/TLS, inbound ports, disk durability or provider capacity.")
+
+
 def apply(config: dict, output: Path, engine: str | None) -> None:
+    check_targets(config, output, engine)
+    hosts = {}
     for target in config["targets"]:
         directory = (output / target["name"]).resolve()
         host = target.get("host")
         if target["provider"] != "ssh":
             tf = [str(engine), f"-chdir={directory}"]
             label = target["name"]
-            print(f"{label}: initializing and validating cloud plan…")
-            _command(
-                [*tf, "init", "-input=false", "-no-color"], f"{label}: provider initialization"
-            )
-            _command([*tf, "validate", "-no-color"], f"{label}: template validation")
-            _command(
-                [*tf, "plan", "-input=false", "-no-color", "-out=deployment.tfplan"],
-                f"{label}: infrastructure plan",
-            )
-            try:
-                plan = json.loads(
-                    _command([*tf, "show", "-json", "deployment.tfplan"], f"{label}: read plan")
-                )
-                if any(
-                    "delete" in change.get("change", {}).get("actions", [])
-                    for change in plan.get("resource_changes", [])
-                ):
-                    raise HavocError(
-                        f"{label}: would delete/replace resources. Refusing destructive apply. "
-                        "back up the room and review migration manually."
-                    )
-            except (ValueError, AttributeError, TypeError) as error:
-                raise HavocError(
-                    "Cannot parse infrastructure plan. Inspect it before applying."
-                ) from error
+            print(f"{label}: applying the checked cloud plan; resources may become billable.")
             _command(
                 [*tf, "apply", "-input=false", "-no-color", "deployment.tfplan"],
                 f"{label}: infrastructure apply",
@@ -578,6 +847,23 @@ def apply(config: dict, output: Path, engine: str | None) -> None:
                 raise HavocError(
                     f"{label}: no public IPv4 address returned. Inspect VM networking."
                 ) from error
+            print(
+                f"{label}: allocated {host}. Set DNS for {target['hostname']} "
+                "and verify its SSH host key."
+            )
+            try:
+                cloud_checks = _host_checks(config, target, host)
+            except HavocError as error:
+                cloud_checks = [("FAIL", label, str(error))]
+            _check_results(
+                cloud_checks,
+                "Host pre-flight failed after VM allocation. Resources may remain billable. "
+                "No host installation was started; fix DNS/SSH/host prerequisites and rerun.",
+            )
+        hosts[target["name"]] = str(host)
+    for target in config["targets"]:
+        directory = (output / target["name"]).resolve()
+        host = hosts[target["name"]]
         print(f"{target['name']}: installing on {host}; DNS must point here for HTTPS.")
         # The remote command is constant; user input is only in argv or validated archive data.
         remote = (
@@ -591,7 +877,7 @@ def apply(config: dict, output: Path, engine: str | None) -> None:
             f"{target['name']}: SSH/bootstrap (verify host key and passwordless sudo first)",
             payload=_bundle(directory),
         )
-        print(f"Installed: https://{target['hostname']} (verify DNS/TLS and /api/state).")
+        print(f"Installed: https://{target['hostname']} (verify DNS/TLS and /readyz).")
         if config["topology"] == "independent" or target is config["targets"][0]:
             retrieval = [*_ssh(config, target, str(host)), "sudo -n cat /etc/havoc365/lifeboat.env"]
             print(
@@ -621,6 +907,28 @@ def run_deployment(args: argparse.Namespace) -> int:
             raw = wizard()
         config = validate_config(raw)
         render(config, args.output, args.assets)
+        UI().table(
+            "Deployment review",
+            ("Target", "Provider / role", "URL / activation"),
+            [
+                (
+                    target["name"],
+                    target["provider"]
+                    + (
+                        " / gateway" if config["topology"] == "shared" and index else " / authority"
+                    ),
+                    f"https://{target['hostname']} / "
+                    + (
+                        "forwarded"
+                        if config["topology"] == "shared" and index
+                        else "automatic"
+                        if config["watch"]["urls"]
+                        else "manual"
+                    ),
+                )
+                for index, target in enumerate(config["targets"])
+            ],
+        )
         print(f"Saved private, credential-free plan: {args.output / 'config.json'}")
         print(f"Bootstrap ref: {config['ref']} (main/branches are mutable, not reproducible pins).")
         print(
@@ -635,10 +943,30 @@ def run_deployment(args: argparse.Namespace) -> int:
             if config["watch"]["urls"]
             else "Manual-only: no probe URLs or installed watcher; activation is NOT automatic."
         )
-        if not args.apply:
+        if not args.apply and not args.check:
             print("Plan only: no cloud/SSH commands ran. Review files and deploy/README.md first.")
+            command = shlex.join(
+                [
+                    "havoc365",
+                    "lifeboat",
+                    "deploy",
+                    "--config",
+                    str(args.output / "config.json"),
+                    "--output",
+                    str(args.output),
+                ]
+            )
+            print(f"Next, read-only: {command} --check")
+            print(f"Install after review: {command} --apply")
             return 0
         engine = preflight(config)
+        if args.check:
+            check_targets(config, args.output, engine)
+            print(
+                "Read-only checks finished. No infrastructure or hosts were changed; "
+                "review PENDING checks."
+            )
+            return 0
         print(
             "APPLY creates/updates billable VMs and configures dedicated hosts (Caddy/systemd). "
             "Existing Caddy configuration is replaced. No destructive cleanup is automatic."
@@ -652,7 +980,11 @@ def run_deployment(args: argparse.Namespace) -> int:
         apply(config, args.output, engine)
         return 0
     except (EOFError, KeyboardInterrupt):
-        print("\nCancelled. No automatic cleanup; review any resources already created.")
+        print(
+            "\nCancelled. No automatic cleanup; review any resources already created."
+            if args.apply
+            else "\nCancelled. No infrastructure or hosts were changed."
+        )
         return 1
     except OSError as error:
         raise HavocError(

@@ -2,6 +2,8 @@
 
 Run `havoc365 lifeboat deploy` for the interactive wizard. Choose AWS, GCP, Alibaba Cloud or existing Linux cloud/on-prem SSH hosts. Select multiple providers, or repeat a provider to create multiple nodes.
 
+Choose providers by number or name. Enter keeps a default; `q` cancels. Invalid fields are retried without discarding earlier answers. The review lists each target's provider, authority/gateway role, URL and automatic/manual activation. Redirected output stays plain text, and `NO_COLOR` is respected.
+
 See [architectures as code](architectures.md) for Mermaid diagrams of all four targets, a mixed shared-authority deployment and independent rooms.
 
 The default only writes a local plan under `deploy/generated/`. It does **not** contact cloud accounts, SSH hosts, DNS or Microsoft. Review those files before:
@@ -11,6 +13,28 @@ havoc365 lifeboat deploy --config deploy/generated/config.json --apply
 ```
 
 Type `APPLY` to authorize billable VM creation and host configuration. Automation must use `--non-interactive --config PATH --apply --confirm APPLY`. The wizard also asks for explicit HTTPS probe URLs: supplying them installs a supervised automatic-activation watcher on each authority; leaving them blank produces a clearly labeled **manual-only** deployment. There is no implicit yes and no automatic destroy or rollback. A failed apply can leave billable resources: inspect them and rerun the same config/output directory.
+
+## Pre-flight checks
+
+The default offline plan validates configuration, SSH key permissions, public-key format for cloud targets and bundled templates. It makes no network calls and does not check installed deployment tools or host readiness.
+
+Run the explicit read-only check before applying:
+
+```sh
+havoc365 lifeboat deploy --config deploy/generated/config.json --check
+```
+
+This writes local plans and may download providers, query cloud APIs and connect over SSH, but creates no infrastructure and installs nothing. It checks:
+
+- Local OpenSSH; for cloud targets, OpenTofu/Terraform 1.6+.
+- Existing SSH hosts: trusted-key noninteractive authentication, passwordless sudo, Ubuntu 24.04, Python 3.12+, a booted systemd host and at least 1 GiB free on each of `/var/lib` and `/opt`.
+- Every cloud target's initialized, validated provider plan, including create/update counts. Deletions and replacements are refused. Planning exercises the configured provider identity and permissions, but cannot guarantee allocation permissions, quota or regional capacity.
+
+**PENDING** means not checked yet, not passed. New VM SSH/OS/storage checks run after allocation; public DNS/TLS, inbound ports, disk durability and package/GitHub reachability are not established by pre-flight. Bootstrap verifies public HTTPS afterward. A zero exit status means the available checks passed, not that the deployment is production-ready.
+
+Apply repeats the read-only checks for **all** targets before the first resource or host change. After each VM allocation, it checks that host before allocating another. No host is installed until every host has passed. An unknown new SSH host key stops the run; verify it through a trusted cloud console, prepare DNS and rerun with the same config/output directory. Already allocated VMs can remain billable. Cancellation and failed checks return a nonzero exit status; there is no automatic rollback.
+
+If you chose a custom `--output`, keep using it for check/apply so that the same provider state and plans are reused. The offline plan prints commands with that directory included.
 
 ## What multiple targets mean
 
@@ -27,7 +51,7 @@ Use dedicated **Ubuntu 24.04** hosts, with persistent storage, outbound package 
 Local requirements:
 
 - OpenSSH (`ssh`) and an existing private key with mode 0600, plus its matching `.pub` file for new VMs. Cloud key import supports RSA and Ed25519; check that the chosen cloud/region/image supports your key type.
-- OpenTofu 1.6+ (`tofu`) or Terraform 1.6+ (`terraform`) for cloud targets. Initialization downloads the provider only on explicit apply. Keep the generated `.terraform.lock.hcl` and deployment state privately for later runs.
+- OpenTofu 1.6+ (`tofu`) or Terraform 1.6+ (`terraform`) for cloud targets. Initialization downloads the provider only on explicit check/apply. Keep the generated `.terraform.lock.hcl` and deployment state privately for later runs.
 - Cloud credentials in the provider's normal local environment/profile/ADC, **never in the config, HCL, cloud-init, tfvars, output or command arguments**. Use short-lived operator credentials. Nothing authenticates to Microsoft.
 - Deployment scripts/templates are bundled in the installed wheel; a source checkout is not required. The canonical assets live in [`src/havoc365/deploy_assets/`](../src/havoc365/deploy_assets/). `--assets PATH` is an optional override for reviewed customized assets.
 

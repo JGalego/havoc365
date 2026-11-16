@@ -27,6 +27,21 @@ class UI:
     def error(self, message: str) -> None:
         self.errors.print(Text(f"Error: {message}", style="bold red"))
 
+    def table(self, title: str, columns: tuple[str, ...], rows: list[tuple[str, ...]]) -> None:
+        if not self.console.is_terminal:
+            self.message(title)
+            self.message(" | ".join(columns))
+            for row in rows:
+                self.message(" | ".join(row))
+            return
+        table = Table(title=title, box=box.ROUNDED, expand=True)
+        for column in columns:
+            table.add_column(column, overflow="fold")
+        for row in rows:
+            style = {"PASS": "green", "FAIL": "red", "PENDING": "yellow"}.get(row[0], "")
+            table.add_row(*(Text(value, style=style) for value in row))
+        self.console.print(table)
+
     @contextmanager
     def working(self, message: str) -> Iterator[None]:
         if self.console.is_terminal:
@@ -78,10 +93,13 @@ class UI:
         menu = "  ".join(f"{index} {service}" for index, service in enumerate(services, 1))
         while True:
             self.console.print(
-                Text("\nInspect: " + menu + "  |  l limits  |  q quit", style="cyan")
+                Text(
+                    "\nInspect: " + menu + "  |  name or /search  |  l limits  |  q quit",
+                    style="cyan",
+                )
             )
             try:
-                choice = self.console.input("View [q]: ", markup=False).strip().lower()
+                choice = self.console.input("View [q]: ", markup=False).strip().casefold()
             except EOFError:
                 return
             if choice in {"", "q", "quit"}:
@@ -95,30 +113,50 @@ class UI:
                     )
                 )
                 continue
-            if (
-                not choice.isascii()
-                or not choice.isdigit()
-                or not 1 <= int(choice) <= len(services)
-            ):
-                self.console.print(Text("Choose a listed number, l, or q.", style="yellow"))
+            query = choice[1:].strip() if choice.startswith("/") else None
+            if query == "":
+                self.console.print(Text("Enter / followed by a search term.", style="yellow"))
                 continue
-            service = services[int(choice) - 1]
-            table = Table(title=f"If {service} goes down", box=box.ROUNDED, expand=True)
-            table.add_column("Check", style="cyan")
-            table.add_column("Full evidence")
-            for finding in report.sections[service]:
-                table.add_row(
-                    Text(finding.summary),
-                    Text(
+            selected = []
+            if (
+                choice.isascii()
+                and choice.isdigit()
+                and len(choice) <= len(str(len(services)))
+                and 1 <= int(choice) <= len(services)
+            ):
+                selected = [services[int(choice) - 1]]
+            elif query is not None:
+                selected = services
+            else:
+                selected = [service for service in services if choice in service.casefold()]
+            matches = 0
+            for service in selected:
+                rows = [
+                    (
+                        finding.summary,
                         "\n".join(finding.details)
                         or (
                             "Not checked; see coverage limits."
                             if finding.skipped
                             else "No matches in the data checked. This does not prove independence."
-                        )
-                    ),
+                        ),
+                    )
+                    for finding in report.sections[service]
+                    if query is None
+                    or query in "\n".join((service, finding.summary, *finding.details)).casefold()
+                ]
+                if rows:
+                    self.table(f"If {service} goes down", ("Check", "Full evidence"), rows)
+                    matches += len(rows)
+            if not matches:
+                self.console.print(
+                    Text(
+                        f"No matches for {query!r}."
+                        if query is not None
+                        else "Choose a listed number, service name, /search, l, or q.",
+                        style="yellow",
+                    )
                 )
-            self.console.print(table)
 
     def show_pilot(self, pilot: Pilot) -> None:
         if not self.console.is_terminal:

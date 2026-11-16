@@ -20,7 +20,18 @@ from havoc365.workflows import add_workflows
 
 
 def parser() -> argparse.ArgumentParser:
-    root = argparse.ArgumentParser(prog="havoc365", description="Downtime by appointment.")
+    root = argparse.ArgumentParser(
+        prog="havoc365",
+        description="Downtime by appointment.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Start here:\n"
+            "  havoc365 lifeboat deploy       Plan a cloud/on-prem deployment; no network calls\n"
+            "  havoc365 lifeboat serve        Start a local room at http://127.0.0.1:8080\n"
+            "  havoc365 map --help            Explore dependencies or local workflow exports\n"
+            "\nDrills change tenant access. Always start with havoc365 drill plan."
+        ),
+    )
     root.add_argument("--version", action="version", version="havoc365 0.1.0.dev0")
     commands = root.add_subparsers(dest="command", required=True)
     login = commands.add_parser("login", help="Sign in with a device code")
@@ -127,7 +138,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "lifeboat":
             if args.action == "deploy":
-                run_deployment(args)
+                return run_deployment(args)
             elif args.action == "serve":
                 serve(state_dir(), args.port, args.contacts)
             elif args.action == "backup":
@@ -228,7 +239,10 @@ def main(argv: list[str] | None = None) -> int:
         ui.error(str(error))
         return 1
     except KeyboardInterrupt:
-        print("Interrupted. If cleanup did not finish, run havoc365 drill revert.", file=sys.stderr)
+        message = "Interrupted."
+        if args.command == "drill" and args.action in {"run", "revert"}:
+            message += " If cleanup did not finish, run havoc365 drill revert."
+        print(message, file=sys.stderr)
         return 130
     finally:
         if previous_handler is not None:

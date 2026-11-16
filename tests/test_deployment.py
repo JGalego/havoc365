@@ -3,6 +3,7 @@ import base64
 import copy
 import io
 import json
+import os
 import shlex
 import subprocess
 import tarfile
@@ -11,6 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from havoc365 import cli
 from havoc365 import deployment as deploy
 from havoc365.cli import parser as cli_parser
 from havoc365.errors import HavocError
@@ -321,6 +323,7 @@ def test_wizard_multiple_choices_and_shared_default(config, monkeypatch, capsys,
             "ssh-node",
             "ssh.example.org",
             "",
+            "",
             "192.0.2.1",
             probes,
         ]
@@ -401,10 +404,12 @@ def test_bad_watch_configuration_fails_before_commands(config, tmp_path, monkeyp
     assert not (tmp_path / "output").exists()
 
 
-def test_wizard_rejects_unknown_provider(monkeypatch):
-    monkeypatch.setattr("builtins.input", lambda prompt: "azure")
-    with pytest.raises(HavocError, match="Unknown target"):
+def test_wizard_reprompts_unknown_provider_and_can_cancel(monkeypatch, capsys):
+    responses = iter(["azure", "q"])
+    monkeypatch.setattr("builtins.input", lambda prompt: next(responses))
+    with pytest.raises(KeyboardInterrupt):
         deploy.wizard()
+    assert "Unknown target" in capsys.readouterr().out
 
 
 def test_command_failure_does_not_expose_provider_output(monkeypatch):
@@ -460,14 +465,23 @@ def test_ssh_apply_transmits_only_installation_assets(config, tmp_path, monkeypa
     output = tmp_path / "output"
     deploy.render(config, output)
     calls = []
-    monkeypatch.setattr(deploy, "_command", lambda *a, **k: calls.append((a, k)) or b"")
+
+    def command(*args, **kwargs):
+        calls.append((args, kwargs))
+        return b"PASS ubuntu\nPASS python\nPASS systemd\nPASS storage\n"
+
+    monkeypatch.setattr(deploy, "_command", command)
     deploy.apply(config, output, None)
-    assert len(calls) == 2
+    assert len(calls) == 4
+    installs = 0
     for (argv, _), kwargs in calls:
         assert argv[0] == "ssh"
         assert "StrictHostKeyChecking=yes" in argv
         assert "BatchMode=yes" in argv
         assert argv[-1].startswith("sudo -n /bin/sh")
+        if argv[-1] == "sudo -n /bin/sh -s":
+            continue
+        installs += 1
         with tarfile.open(fileobj=io.BytesIO(kwargs["payload"])) as archive:
             assert set(archive.getnames()) == {
                 "bootstrap.sh",
@@ -477,6 +491,7 @@ def test_ssh_apply_transmits_only_installation_assets(config, tmp_path, monkeypa
                 "deployment.json",
             }
         assert b"PRIVATE-KEY-MUST-NOT-APPEAR" not in kwargs["payload"]
+    assert installs == 2
     output = capsys.readouterr().out
     assert "No invitations were delivered" in output
     assert output.count("cat /etc/havoc365/lifeboat.env") == 1
@@ -504,6 +519,8 @@ def test_cloud_command_path_and_destructive_plan_rejection(
 
     def command(argv, label, **kwargs):
         calls.append(argv)
+        if argv[0] == "ssh":
+            return b"PASS ubuntu\nPASS python\nPASS systemd\nPASS storage\n"
         if "show" in argv:
             return json.dumps(
                 {
@@ -524,7 +541,7 @@ def test_cloud_command_path_and_destructive_plan_rejection(
         assert all(argv[0] != "ssh" for argv in calls)
     else:
         deploy.apply(config, output, "/usr/bin/tofu")
-        assert [argv[2] for argv in calls[:-1]] == [
+        assert [argv[2] for argv in calls if argv[0] != "ssh"] == [
             "init",
             "validate",
             "plan",
@@ -553,3 +570,232 @@ def test_saved_config_unchanged_when_target_order_changes(config, tmp_path):
     with pytest.raises(HavocError, match="Target order"):
         deploy.render(changed, output)
     assert json.loads((output / "config.json").read_text())["targets"][0]["name"] == "primary"
+
+
+def test_cli_preserves_deployment_cancellation(monkeypatch):
+    monkeypatch.setattr(cli, "run_deployment", lambda args, **kwargs: 1)
+    assert cli.main(["lifeboat", "deploy", "--non-interactive"]) == 1
+
+
+def test_check_reads_hosts_without_installing(config, tmp_path, monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr(deploy, "preflight", lambda config: None)
+
+    def command(argv, label, **kwargs):
+        calls.append((argv, kwargs))
+        return b"PASS ubuntu\nPASS python\nPASS systemd\nPASS storage\n"
+
+    monkeypatch.setattr(deploy, "_command", command)
+    assert deploy.run_deployment(arguments(tmp_path, config, "--check")) == 0
+    assert len(calls) == 2
+    assert all(argv[-1] == "sudo -n /bin/sh -s" for argv, _ in calls)
+    assert all(b"apt-get" not in kwargs["payload"] for _, kwargs in calls)
+    assert "No infrastructure or hosts were changed" in capsys.readouterr().out
+
+
+def test_every_cloud_plan_is_checked_before_any_target_changes(config, tmp_path, monkeypatch):
+    for index, name in enumerate(("primary", "secondary")):
+        config["targets"][index] = {
+            "provider": "aws",
+            "name": name,
+            "hostname": f"{name}.example.org",
+            "region": "eu-west-1",
+            "image": "ami-123abc",
+            "vpc_id": "vpc-123abc",
+            "subnet_id": "subnet-123abc",
+        }
+    clean = deploy.validate_config(config)
+    output = tmp_path / "output"
+    deploy.render(clean, output)
+    calls = []
+
+    def command(argv, label, **kwargs):
+        calls.append(argv)
+        if "plan" in argv and "secondary" in label:
+            raise HavocError("secondary: quota/permission check failed")
+        if "show" in argv:
+            return b'{"resource_changes":[]}'
+        if "output" in argv:
+            return b'"8.8.4.4"'
+        return b"PASS ubuntu\nPASS python\nPASS systemd\nPASS storage\n"
+
+    monkeypatch.setattr(deploy, "_command", command)
+    with pytest.raises(HavocError):
+        deploy.apply(clean, output, "/usr/bin/tofu")
+    assert not any("apply" in argv or (argv[0] == "ssh" and "tar " in argv[-1]) for argv in calls)
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        b"PASS ubuntu\nPASS python\nPASS systemd\nFAIL storage\n",
+        b"FAIL ubuntu\nPASS python\nPASS systemd\nPASS storage\n",
+        b"private-unexpected-output",
+    ],
+)
+def test_failed_host_preflight_blocks_every_installation(
+    config, tmp_path, monkeypatch, capsys, reply
+):
+    clean = deploy.validate_config(config)
+    output = tmp_path / "output"
+    deploy.render(clean, output)
+    calls = []
+
+    def command(argv, label, **kwargs):
+        calls.append(argv)
+        return reply
+
+    monkeypatch.setattr(deploy, "_command", command)
+    with pytest.raises(HavocError, match="No infrastructure or hosts were changed") as caught:
+        deploy.apply(clean, output, None)
+    assert len(calls) == 2
+    assert all(argv[-1] == "sudo -n /bin/sh -s" for argv in calls)
+    assert "private-unexpected-output" not in str(caught.value) + capsys.readouterr().out
+
+
+@pytest.mark.parametrize("version", ["1.5.7", "unparseable", [], None])
+def test_cloud_engine_version_is_checked(config, monkeypatch, version):
+    config["targets"][0]["provider"] = "aws"
+    monkeypatch.setattr(deploy.shutil, "which", lambda tool: f"/usr/bin/{tool}")
+    monkeypatch.setattr(
+        deploy, "_command", lambda *a, **kw: json.dumps({"terraform_version": version}).encode()
+    )
+    with pytest.raises(HavocError, match=r"OpenTofu/Terraform 1.6\+"):
+        deploy.preflight(config)
+
+
+def test_cloud_check_only_plans_and_reports_deferred_host_checks(
+    config, tmp_path, monkeypatch, capsys
+):
+    config["targets"] = [
+        {
+            "provider": "gcp",
+            "name": "cloud",
+            "hostname": "cloud.example.org",
+            "project": "test-project",
+            "region": "us-central1",
+            "zone": "us-central1-a",
+        }
+    ]
+    monkeypatch.setattr(deploy, "preflight", lambda config: "/usr/bin/tofu")
+    calls = []
+
+    def command(argv, label, **kwargs):
+        calls.append(argv)
+        return b'{"resource_changes":[{"change":{"actions":["create"]}}]}'
+
+    monkeypatch.setattr(deploy, "_command", command)
+    assert deploy.run_deployment(arguments(tmp_path, config, "--check", "--non-interactive")) == 0
+    assert [argv[2] for argv in calls] == ["init", "validate", "plan", "show"]
+    text = capsys.readouterr().out
+    assert "1 create, 0 update" in text
+    assert "PENDING" in text and "after VM allocation" in text
+    assert "No infrastructure or hosts were changed" in text
+
+
+def test_wizard_corrects_invalid_fields_without_losing_answers(config, monkeypatch, capsys):
+    answers = iter(
+        [
+            "unknown",
+            "4",
+            "typo",
+            "",
+            "/missing/key",
+            config["ssh_key"],
+            "0.0.0.0/0",
+            config["ssh_cidr"],
+            "http://wrong.example.org",
+            "",
+            "main;command",
+            "",
+            "../bad",
+            "",
+            "https://wrong.example.org",
+            "room.example.org",
+            "-bad-user",
+            "",
+            "70000",
+            "2222",
+            "host;command",
+            "192.0.2.1",
+            "http://wrong.example.org",
+            "",
+        ]
+    )
+    monkeypatch.setattr("builtins.input", lambda prompt: next(answers))
+    monkeypatch.setattr(
+        deploy.subprocess, "run", lambda *a, **kw: pytest.fail("Wizard must stay offline")
+    )
+    clean = deploy.validate_config(deploy.wizard())
+    assert clean["targets"][0]["ssh_port"] == 2222
+    assert clean["targets"][0]["hostname"] == "room.example.org"
+    assert clean["repository"] == deploy.DEFAULT_REPOSITORY
+    assert clean["watch"]["urls"] == []
+    assert capsys.readouterr().out.count("Try again:") == 12
+
+
+def test_new_vm_host_failure_stops_further_allocation(config, tmp_path, monkeypatch):
+    config["targets"] = [
+        {
+            "provider": "gcp",
+            "name": name,
+            "hostname": f"{name}.example.org",
+            "project": "test-project",
+            "region": "us-central1",
+            "zone": "us-central1-a",
+        }
+        for name in ("primary", "secondary")
+    ]
+    clean = deploy.validate_config(config)
+    output = tmp_path / "output"
+    deploy.render(clean, output)
+    calls = []
+
+    def command(argv, label, **kwargs):
+        calls.append(argv)
+        if argv[0] == "ssh":
+            raise HavocError("SSH host key is not trusted yet.")
+        if "output" in argv:
+            return b'"8.8.4.4"'
+        return b'{"resource_changes":[]}'
+
+    monkeypatch.setattr(deploy, "_command", command)
+    with pytest.raises(HavocError, match="Resources may remain billable"):
+        deploy.apply(clean, output, "/usr/bin/tofu")
+    assert sum("apply" in argv for argv in calls) == 1
+    assert all(argv[-1] == "sudo -n /bin/sh -s" for argv in calls if argv[0] == "ssh")
+
+
+@pytest.mark.parametrize(
+    ("available", "status"),
+    [(1_048_575, "FAIL"), (1_048_576, "PASS")],
+)
+def test_real_host_probe_checks_one_gib_free_on_each_mount(
+    config, tmp_path, monkeypatch, available, status
+):
+    probes = []
+
+    def command(argv, label, **kwargs):
+        probes.append(kwargs["payload"])
+        return b"PASS ubuntu\nPASS python\nPASS systemd\nPASS storage\n"
+
+    monkeypatch.setattr(deploy, "_command", command)
+    clean = deploy.validate_config(config)
+    deploy._host_checks(clean, clean["targets"][0], "192.0.2.1")
+    df = tmp_path / "df"
+    df.write_text(
+        "#!/bin/sh\nprintf '%s\\n' "
+        "'Filesystem 1024-blocks Used Available Capacity Mounted on' "
+        "'disk1 2097152 0 1048576 0% /var/lib' "
+        f"'disk2 2097152 0 {available} 0% /opt'\n"
+    )
+    df.chmod(0o700)
+    result = subprocess.run(
+        ["/bin/sh"],
+        input=probes[0],
+        capture_output=True,
+        timeout=10,
+        env=dict(os.environ, PATH=f"{tmp_path}:{os.defpath}"),
+        check=True,
+    )
+    assert f"{status} storage".encode() in result.stdout.splitlines()

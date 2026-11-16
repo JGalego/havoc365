@@ -138,3 +138,25 @@ def test_map_no_interactive_never_opens_explorer(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     assert cli.main(["map", "--no-interactive"]) == 0
     assert (tmp_path / "blast-radius.md").exists()
+
+
+def test_explorer_searches_evidence_and_accepts_service_names(monkeypatch):
+    ui, stream = terminal_ui()
+    choices = iter(["/billing", "sharepoint", "/missing", "q"])
+    monkeypatch.setattr(ui.console, "input", lambda _, **kwargs: next(choices))
+    ui.explore(example_report())
+    output = stream.getvalue()
+    assert "billing" in output
+    assert "0 runbook matches" in output
+    assert "No matches for" in output
+
+
+def test_monitor_interrupt_does_not_suggest_reverting_a_drill(monkeypatch, capsys):
+    def interrupt(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "watch", interrupt)
+    assert cli.main(["watch", "--url", "https://example.org"]) == 130
+    message = capsys.readouterr().err
+    assert "Interrupted." in message
+    assert "drill revert" not in message

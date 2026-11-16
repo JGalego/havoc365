@@ -85,7 +85,7 @@ You need [uv](https://docs.astral.sh/uv/) and a Microsoft 365 account with the G
 
 The report uses SMTP AUTH sign-in logs, app registrations, enterprise apps, domain MX records, and a file search for `runbook`, `major incident` or `incident response`. It cannot identify every device behind a shared mail account or runbooks that don't match those terms. It doesn't count tenant users; that would need another Graph permission.
 
-In a terminal, `map` shows a table and lets you inspect each service's full findings with `1`, `2` or `3`. Press `l` for coverage limits or `q` to leave. Browsing the results makes no further network requests. Use `havoc365 map --no-interactive` to skip the explorer. Redirected output stays plain text; the Markdown report is saved before the explorer opens.
+In a terminal, `map` shows a table and lets you inspect each service's full findings by number or name. Enter `/billing` to search service names, summaries and full evidence for “billing”. Press `l` for coverage limits or `q` to leave. Browsing the results makes no further network requests. Use `havoc365 map --no-interactive` to skip the explorer. Redirected output stays plain text; the Markdown report is saved before the explorer opens.
 
 Drill previews show the pilot roster as a table. Mapping, pilot checks, revert and report show progress while waiting for Graph. Terminal colours follow `NO_COLOR` when set.
 
@@ -201,6 +201,14 @@ havoc365 lifeboat deploy
 ```
 
 By default it writes an offline plan, not infrastructure. Review the generated files, then use `--apply` and explicitly confirm `APPLY` to authorize installation and possible charges. Cloud credentials stay in their providers' normal local configuration, not the deployment JSON.
+
+The wizard accepts provider numbers or names, retries invalid fields and shows each target's role, URL and activation mode. Enter `q` at any prompt to cancel. To check a saved plan without installing anything:
+
+```sh
+havoc365 lifeboat deploy --config deploy/generated/config.json --check
+```
+
+`--check` makes read-only SSH/cloud calls. It checks SSH access and passwordless sudo on existing hosts, Ubuntu 24.04, Python 3.12+, systemd and at least 1 GiB free on `/var/lib` and `/opt`. Cloud targets require OpenTofu/Terraform 1.6+ and get a provider plan; deletion/replacement is refused. New VM host checks remain **PENDING** until allocation. Apply checks every target before the first change and checks new VMs before any installation. DNS/TLS, inbound ports, durable disks and available cloud capacity are not proven by pre-flight. See the [pre-flight details](deploy/README.md#pre-flight-checks).
 
 Enter explicit HTTPS probe URLs to install a supervised watcher that opens the room when those endpoints fail. Leave them blank for manual-only activation. Deployment does not enable SMS or send invitations; the paid, opt-in roster workflow is described below.
 
