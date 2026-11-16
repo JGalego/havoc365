@@ -88,7 +88,10 @@ def render(size):
     head = np.maximum(travelled <= OVERLAP, np.clip(0.5 - d_cap / px, 0, 1))[..., None]
 
     lut = gradient()
-    pick = lambda deg: lut[(np.clip(deg / total, 0, 1) * (len(lut) - 1)).astype(int)]
+
+    def pick(deg):
+        return lut[(np.clip(deg / total, 0, 1) * (len(lut) - 1)).astype(int)]
+
     tail = pick(travelled)
     tail *= 1 - (0.38 * np.clip(1 - d_cap / 0.11, 0, 1) ** 2 * (travelled > OVERLAP))[..., None]
     colour = tail * (1 - head) + pick(360 + travelled) * head
@@ -119,14 +122,19 @@ def shift_x(img, k):
 
 
 def tint(img, hex_, strength=0.9):
-    return np.dstack([np.broadcast_to(rgb(hex_), img.shape[:2] + (3,)), img[..., 3] * strength])
+    return np.dstack([np.broadcast_to(rgb(hex_), (*img.shape[:2], 3)), img[..., 3] * strength])
 
 
 def glitch(img, bands, ghost=0.0, jitter=0.0, drops=(), desat=0.0):
     """Shift horizontal bands, split their colour, drop slices, drain colour."""
     n = img.shape[0]
-    unit = lambda v: round(v * n / 2)
-    row = lambda v: int(np.clip(round((v + 1) * n / 2), 0, n))
+
+    def unit(v):
+        return round(v * n / 2)
+
+    def row(v):
+        return int(np.clip(round((v + 1) * n / 2), 0, n))
+
     out = img.copy()
     for top, bottom, shift in bands:
         a, b = row(top), row(bottom)
@@ -190,15 +198,19 @@ def save_gif(frames, path):
         f = np.round(f * 255).astype(np.uint8)
         solid = f[..., 3] >= 128
         sample = Image.fromarray(f[..., :3][solid][None])
-        colours = sample.quantize(colors=255, method=Image.Quantize.MEDIANCUT).getpalette()[: 255 * 3]
+        colours = sample.quantize(colors=255, method=Image.Quantize.MEDIANCUT).getpalette()[
+            : 255 * 3
+        ]
         colours += colours[:3] * (256 - len(colours) // 3)  # pad by repeating slot 0
         palette = Image.new("P", (1, 1))
         palette.putpalette(colours)
-        idx = np.array(Image.fromarray(f[..., :3]).quantize(palette=palette, dither=Image.Dither.NONE))
+        idx = np.array(
+            Image.fromarray(f[..., :3]).quantize(palette=palette, dither=Image.Dither.NONE)
+        )
         idx[idx == 255] = 0
         idx[~solid] = 255
         im = Image.fromarray(idx, "P")
-        im.putpalette(colours[: 255 * 3] + [0, 0, 0])
+        im.putpalette([*colours[: 255 * 3], 0, 0, 0])
         images.append(im)
     images[0].save(
         path,
