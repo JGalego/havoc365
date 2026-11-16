@@ -167,7 +167,7 @@ havoc365 lifeboat serve --contacts "$HOME/.config/havoc365/contacts.json" --port
 
 Omitting `--contacts` keeps any previously imported contacts. The file is local configuration, not a tenant export.
 
-The room shows its state separately from its connection: **Standby**, **Chat open**, or **Reconnecting**. An open room isn't proof of a Microsoft outage; it can also be a drill. Search contacts by name or contact detail and use **Copy contact** to copy a number or address.
+The room shows its state separately from its connection: **Standby**, **Chat open**, or **Reconnecting**. An open room isn't proof of a Microsoft outage; it can also be a drill. On phones, switch between the **Chat** and **Contacts** tabs. Search contacts by name or contact detail and use the copy icon beside a contact to copy a number or address. Room information and token help expand when needed.
 
 Press Ctrl+Enter (Cmd+Enter on macOS) to send a check-in. Incoming messages don't pull you away from older messages you're reading; **Jump to latest** brings you back. A failed send keeps the draft and its warning visible. Drafts also survive a connection failure or a switch to standby, but leaving or reloading clears them. There is no automatic message retry.
 

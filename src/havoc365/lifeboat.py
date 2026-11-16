@@ -198,7 +198,13 @@ def create_app(directory: Path, contacts: Path | None = None) -> Starlette:
 
     async def static(request: Request) -> Response:
         name = request.path_params.get("name", "index.html")
-        types = {"index.html": "text/html", "app.js": "text/javascript", "style.css": "text/css"}
+        types = {
+            "index.html": "text/html",
+            "app.js": "text/javascript",
+            "style.css": "text/css",
+            "logo.png": "image/png",
+            "lifebuoy.png": "image/png",
+        }
         if name not in types:
             return Response(status_code=404)
         content = files("havoc365").joinpath("web", name).read_bytes()

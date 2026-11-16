@@ -71,6 +71,24 @@ def join(page, member):
     expect(page.locator("#workspace")).to_be_visible()
 
 
+@pytest.mark.parametrize("width", [320, 390, 1280])
+def test_join_screen_is_concise_and_branding_loads_without_overflow(incident_room, width):
+    page, _, _, _, _ = incident_room
+    page.set_viewport_size({"width": width, "height": 844})
+    assert len(page.locator("body").inner_text().split()) <= 30
+    for source in ("/logo.png", "/lifebuoy.png"):
+        assert page.locator(f"img[src='{source}']").first.evaluate(
+            "image => image.complete && image.naturalWidth > 0"
+        )
+    assert page.locator("#join-submit").evaluate(
+        "button => button.getBoundingClientRect().bottom <= innerHeight"
+    )
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    page.get_by_text("Need a token?", exact=True).click()
+    expect(page.locator("#token-help")).to_be_visible()
+    expect(page.locator("#token-help")).to_contain_text("incident lead")
+
+
 def test_standby_contacts_are_searchable_without_activating_chat(incident_room):
     page, _, member, _, _ = incident_room
     join(page, member)
@@ -107,7 +125,7 @@ def test_connection_loss_preserves_draft_then_keyboard_send_is_plain_text(incide
     page.get_by_label("Your check-in", exact=True).fill(message)
     state["offline"] = True
     expect(page.locator("#status")).to_have_text("Reconnecting")
-    expect(page.get_by_role("button", name="Send check-in")).to_be_disabled()
+    expect(page.get_by_role("button", name="Send", exact=True)).to_be_disabled()
     expect(page.get_by_label("Your check-in", exact=True)).to_have_value(message)
     state["offline"] = False
     page.get_by_role("button", name="Retry now").click()
@@ -127,12 +145,31 @@ def test_mobile_failure_is_visible_after_poll_and_standby_keeps_draft(incident_r
     client.post("/api/status", headers=admin, json={"active": True})
     join(page, member)
     expect(page.locator("#room-title")).to_be_in_viewport(ratio=1)
-    page.get_by_role("button", name="Contacts", exact=True).click()
-    expect(page.get_by_role("searchbox", name="Search contacts")).to_be_focused()
+    page.get_by_role("tab", name="Contacts", exact=True).click()
+    expect(page.locator("#room-main")).to_be_hidden()
+    expect(page.locator("#contacts-panel")).to_be_visible()
+    page.get_by_role("searchbox", name="Search contacts").fill("network")
+    page.get_by_role("tab", name="Contacts", exact=True).press("ArrowLeft")
+    expect(page.get_by_role("tab", name="Chat", exact=True)).to_be_focused()
+    expect(page.locator("#contacts-panel")).to_be_hidden()
+    expect(page.locator("#room-main")).to_be_visible()
+    page.get_by_role("tab", name="Chat", exact=True).press("End")
+    expect(page.get_by_role("searchbox", name="Search contacts")).to_have_value("network")
+    page.set_viewport_size({"width": 1280, "height": 900})
+    expect(page.locator("#room-main")).to_be_visible()
+    expect(page.locator("#contacts-panel")).to_be_visible()
+    page.set_viewport_size({"width": 390, "height": 844})
+    expect(page.locator("#room-main")).to_be_hidden()
+    page.get_by_role("tab", name="Chat", exact=True).click()
     page.get_by_label("Your name", exact=True).fill("Volunteer")
     page.get_by_label("Your check-in", exact=True).fill("Checking in from my phone.")
+    page.get_by_role("tab", name="Contacts", exact=True).click()
+    page.get_by_role("tab", name="Chat", exact=True).click()
+    expect(page.get_by_label("Your check-in", exact=True)).to_have_value(
+        "Checking in from my phone."
+    )
     state["fail_send"] = True
-    page.get_by_role("button", name="Send check-in").click()
+    page.get_by_role("button", name="Send", exact=True).click()
     expect(page.locator("#send-feedback")).to_contain_text("Not confirmed")
     for _ in range(2):
         with page.expect_response("**/api/room"):
@@ -153,8 +190,10 @@ def test_mobile_failure_is_visible_after_poll_and_standby_keeps_draft(incident_r
     assert page.evaluate("localStorage.length + sessionStorage.length") == 0
 
 
-def test_new_messages_do_not_move_someone_reading_older_check_ins(incident_room):
+@pytest.mark.parametrize("width", [390, 1280])
+def test_new_messages_do_not_move_someone_reading_older_check_ins(incident_room, width):
     page, client, member, admin, _ = incident_room
+    page.set_viewport_size({"width": width, "height": 900})
     client.post("/api/status", headers=admin, json={"active": True})
     headers = {"Authorization": f"Bearer {member}"}
     for index in range(15):
@@ -167,8 +206,10 @@ def test_new_messages_do_not_move_someone_reading_older_check_ins(incident_room)
             },
         )
     join(page, member)
-    page.locator("#messages").evaluate("list => list.scrollTop = 0")
+    page.locator("#messages").evaluate("list => list.scrollTop = 120")
     first = page.locator(".message").first.element_handle()
+    if width == 390:
+        page.get_by_role("tab", name="Contacts", exact=True).click()
     client.post(
         "/api/messages",
         headers=headers,
@@ -177,8 +218,11 @@ def test_new_messages_do_not_move_someone_reading_older_check_ins(incident_room)
             "message": "A new update has arrived.",
         },
     )
-    expect(page.get_by_role("button", name="New check-ins. Jump to latest")).to_be_visible()
+    expect(page.locator("#message-count")).to_have_text("16")
+    if width == 390:
+        page.get_by_role("tab", name="Chat", exact=True).click()
+    expect(page.get_by_role("button", name="Jump to latest", exact=True)).to_be_visible()
     assert first.evaluate("item => item.isConnected")
-    assert page.locator("#messages").evaluate("list => list.scrollTop") == 0
-    page.get_by_role("button", name="New check-ins. Jump to latest").click()
+    assert page.locator("#messages").evaluate("list => list.scrollTop") == 120
+    page.get_by_role("button", name="Jump to latest", exact=True).click()
     expect(page.locator("#jump-latest")).to_be_hidden()

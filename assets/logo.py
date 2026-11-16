@@ -7,6 +7,7 @@
     uv run assets/logo.py
 
 Writes assets/logo.png (static, 1024 px wide) and assets/logo.gif (animated, 440 px wide).
+Also writes the bundled Lifeboat logo and buoy to src/havoc365/web/.
 
 The mark is a gradient ribbon that runs 365 degrees, so its end overlaps its
 start. Glitch slices cut through it at rest; the animation is an outage and
@@ -19,6 +20,7 @@ import numpy as np
 from PIL import Image
 
 HERE = Path(__file__).parent
+WEB = HERE.parent / "src" / "havoc365" / "web"
 
 STOPS = ["#00B4F0", "#2563EB", "#7C3AED", "#DB2777", "#FB923C"]  # start -> end of ribbon
 GHOST_L, GHOST_R = "#00E5FF", "#FF2E93"  # chromatic split, left and right
@@ -101,6 +103,24 @@ def render(size):
 
     alpha = np.clip(0.5 - (np.abs(r - R_MID) - HALF_W) / px, 0, 1)
     return np.dstack([np.clip(colour, 0, 1), alpha])
+
+
+def lifebuoy(size):
+    """Keep the havoc365 ribbon, adding four straps and a perimeter rope."""
+    px = 2 / size
+    c = (np.arange(size) + 0.5) * px - 1
+    x, y = np.meshgrid(c, -c)
+    base = render(size)
+    strap = np.clip((0.13 - np.abs(np.abs(x) - np.abs(y)) / np.sqrt(2)) / px, 0, 1)
+    cream = rgb("#F3EEE6") * (0.96 + 0.04 * y[..., None])
+    base[..., :3] = base[..., :3] * (1 - strap[..., None]) + cream * strap[..., None]
+    rope = np.dstack(
+        [
+            np.broadcast_to(rgb("#68758B"), (*x.shape, 3)),
+            np.clip(0.5 - (np.abs(np.hypot(x, y) - 0.91) - 0.009) / px, 0, 1),
+        ]
+    )
+    return over(glitch(base, REST, ghost=REST_GHOST), rope)
 
 
 def over(top, bottom):
@@ -232,3 +252,5 @@ def trim(img):
 if __name__ == "__main__":
     save_png(trim(glitch(render(1024), REST, ghost=REST_GHOST)), HERE / "logo.png")
     save_gif([(trim(f), d) for f, d in animation(440)], HERE / "logo.gif")
+    save_png(trim(glitch(render(192), REST, ghost=REST_GHOST)), WEB / "logo.png")
+    save_png(lifebuoy(384), WEB / "lifebuoy.png")

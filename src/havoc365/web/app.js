@@ -10,7 +10,9 @@ let lastSeen = null;
 let contacts = [];
 let contactSignature = "";
 let newestMessage = 0;
+let panel = "chat";
 const element = id => document.getElementById(id);
+const mobile = matchMedia("(max-width: 700px)");
 
 class APIError extends Error {
   constructor(message, status) {
@@ -39,11 +41,22 @@ async function api(path, body) {
 
 function updateSendButton() {
   element("send-submit").disabled = sending || !connected || !active;
-  element("send-submit").textContent = sending ? "Sending..." : "Send check-in";
+  element("send-submit").textContent = sending ? "Sending..." : "Send";
 }
 
 function updateCounter() {
   element("message-counter").textContent = `${element("message").value.length} / 2000`;
+  element("message-counter").hidden = !element("message").value.length;
+}
+
+function selectPanel(selected) {
+  panel = selected;
+  for (const name of ["chat", "contacts"]) {
+    const chosen = name === selected;
+    element(`tab-${name}`).setAttribute("aria-selected", String(chosen));
+    element(`tab-${name}`).tabIndex = chosen ? 0 : -1;
+    element(name === "chat" ? "room-main" : "contacts-panel").hidden = mobile.matches && !chosen;
+  }
 }
 
 function sendFeedback(message, error = false) {
@@ -75,6 +88,8 @@ function leave(message = "") {
   element("error").textContent = message;
   element("contact-feedback").textContent = "";
   element("connection-banner").hidden = true;
+  element("room-info").open = false;
+  selectPanel("chat");
   sendFeedback("");
   updateCounter();
   updateSendButton();
@@ -93,9 +108,10 @@ function connection(ok, error) {
   } else {
     if (element("status").textContent !== "Reconnecting") element("status").textContent = "Reconnecting";
     element("status").dataset.state = "disconnected";
-    const saved = lastSeen ? ` Showing the room as of ${lastSeen.toLocaleTimeString()}.` : "";
-    const notice = `Connection lost.${saved} Your draft stays in this tab. Retrying automatically. ${error.message}`;
+    const saved = lastSeen ? ` Last update ${lastSeen.toLocaleTimeString()}.` : "";
+    const notice = `Connection lost. Retrying.${saved} Draft kept in this tab.`;
     if (element("connection").textContent !== notice) element("connection").textContent = notice;
+    element("connection-reason").textContent = error.message;
   }
   updateSendButton();
 }
@@ -115,8 +131,9 @@ function renderContacts() {
     const copy = document.createElement("button");
     copy.type = "button";
     copy.className = "button-subtle";
-    copy.textContent = "Copy contact";
+    copy.append(element("copy-icon").content.cloneNode(true));
     copy.setAttribute("aria-label", `Copy contact for ${contact.name}`);
+    copy.title = `Copy contact for ${contact.name}`;
     copy.addEventListener("click", async () => {
       try {
         await navigator.clipboard.writeText(contact.contact);
@@ -132,8 +149,8 @@ function renderContacts() {
     const empty = document.createElement("li");
     empty.className = "contacts-empty";
     empty.textContent = contacts.length
-      ? "No contacts match. Try another name or contact detail."
-      : "No contacts imported. Ask your incident lead to add independent contact details.";
+      ? "No contacts match."
+      : "No contacts yet. Ask your incident lead to add them.";
     items.push(empty);
   }
   element("contacts").replaceChildren(...items);
@@ -147,6 +164,7 @@ function jumpToLatest() {
 
 function renderMessages(messages) {
   const list = element("messages");
+  const visible = element("chat").getClientRects().length > 0;
   const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 48;
   const initial = newestMessage === 0;
   const ids = new Set(messages.map(message => String(message.id)));
@@ -181,7 +199,7 @@ function renderMessages(messages) {
   element("chat-empty").hidden = messages.length > 0;
   list.hidden = messages.length === 0;
   element("message-count").textContent = String(messages.length);
-  if (added && (initial || atBottom)) jumpToLatest();
+  if (added && visible && (initial || atBottom)) jumpToLatest();
   else if (added) element("jump-latest").hidden = false;
   newestMessage = messages.length ? messages[messages.length - 1].id : 0;
 }
@@ -246,6 +264,8 @@ element("join").addEventListener("submit", async event => {
     if (joined !== session) return;
     element("welcome").hidden = true;
     element("workspace").hidden = false;
+    element("room-info").open = false;
+    selectPanel("chat");
     renderRoom(room);
     connection(true);
     scheduleRefresh();
@@ -265,11 +285,23 @@ element("retry").addEventListener("click", () => {
 });
 element("contact-search").addEventListener("input", renderContacts);
 function focusContacts() {
+  selectPanel("contacts");
   element("contact-search").scrollIntoView({ block: "center" });
   element("contact-search").focus();
 }
 element("find-contact").addEventListener("click", focusContacts);
-element("open-contacts").addEventListener("click", focusContacts);
+for (const name of ["chat", "contacts"]) {
+  const tab = element(`tab-${name}`);
+  tab.addEventListener("click", () => selectPanel(name));
+  tab.addEventListener("keydown", event => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const next = event.key === "Home" ? "chat" : event.key === "End" ? "contacts" : name === "chat" ? "contacts" : "chat";
+    selectPanel(next);
+    element(`tab-${next}`).focus();
+  });
+}
+mobile.addEventListener("change", () => selectPanel(panel));
 element("jump-latest").addEventListener("click", jumpToLatest);
 element("messages").addEventListener("scroll", () => {
   const list = element("messages");
@@ -304,7 +336,7 @@ element("send").addEventListener("submit", async event => {
       leave("Your member token no longer works. Ask your incident lead for the current token.");
       return;
     }
-    sendFeedback(`Not confirmed. Check the room before sending again. Your draft is still here. ${error.message}`, true);
+    sendFeedback(`Not confirmed. Check chat before retrying. Draft kept. ${error.message}`, true);
   } finally {
     if (joined === session) {
       sending = false;
