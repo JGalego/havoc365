@@ -39,13 +39,11 @@ def write_json(path: Path, value: JsonObject) -> None:
     write_private(path, json.dumps(value, indent=2) + "\n")
 
 
-def read_json(path: Path) -> JsonObject:
+def read_json(path: Path, *, recovery: str = "Restore the file or log in again.") -> JsonObject:
     try:
         value = json.loads(path.read_text())
     except (OSError, ValueError) as error:
-        raise HavocError(
-            f"Cannot read {path}: {error}. Restore the file or log in again."
-        ) from error
+        raise HavocError(f"Cannot read {path}: {error}. {recovery}") from error
     if not isinstance(value, dict):
-        raise HavocError(f"{path} must contain a JSON object. Restore it or log in again.")
+        raise HavocError(f"{path} must contain a JSON object. {recovery}")
     return value

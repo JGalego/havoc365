@@ -134,7 +134,7 @@ Generate two different random tokens, then start the server:
 ```sh
 export HAVOC365_LIFEBOAT_TOKEN="$(uv run --no-project python -c 'import secrets; print(secrets.token_urlsafe(32))')"
 export HAVOC365_LIFEBOAT_ADMIN_TOKEN="$(uv run --no-project python -c 'import secrets; print(secrets.token_urlsafe(32))')"
-havoc365 lifeboat serve --contacts /private/contacts.json --port 8080
+havoc365 lifeboat serve --port 8080
 ```
 
 ```text
@@ -142,13 +142,21 @@ Lifeboat listening at http://127.0.0.1:8080. Expose it only behind an HTTPS reve
 Room starts in its saved state. Names are self-reported; share the member token out of band.
 ```
 
+Open **http://127.0.0.1:8080** on the machine running the server and enter the member token. From this checkout, use `uv run havoc365` in place of `havoc365`. If you're connected over SSH or VS Code Remote, forward port 8080 to your own machine; the remote host's loopback address isn't your laptop's.
+
 Keep these tokens in your host's secret store so restarts use the same values. Share only the member token with participants, through a channel that doesn't depend on Microsoft. Give the administrator token to the watcher. Both must be at least 32 characters; names in chat are self-reported, not verified identities.
 
-The contacts file is local configuration, not a tenant export:
+Contacts are optional. Installation doesn't create a contacts file. To import contacts, save a JSON file outside this checkout, then restart with `--contacts` pointing to that real file. For example, create `$HOME/.config/havoc365/contacts.json` with your own contact details:
 
 ```json
 {"contacts": [{"name": "Incident desk", "contact": "Your independent contact number"}]}
 ```
+
+```sh
+havoc365 lifeboat serve --contacts "$HOME/.config/havoc365/contacts.json" --port 8080
+```
+
+Omitting `--contacts` keeps any previously imported contacts. The file is local configuration, not a tenant export.
 
 The server binds to `127.0.0.1` only. Put an HTTPS reverse proxy in front of it. For example, with [Caddy](https://caddyserver.com/docs/quick-starts/reverse-proxy):
 

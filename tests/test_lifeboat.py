@@ -194,6 +194,17 @@ def test_contacts_reject_malformed_input(tmp_path):
         Room(tmp_path / "data", contacts)
 
 
+@pytest.mark.parametrize("contents", [None, "{", "[]"])
+def test_unreadable_contacts_explain_optional_file_not_sign_in(tmp_path, contents):
+    contacts = tmp_path / "contacts.json"
+    if contents is not None:
+        contacts.write_text(contents)
+    with pytest.raises(HavocError) as failure:
+        Room(tmp_path / "data", contacts)
+    assert "omit --contacts" in str(failure.value)
+    assert "log in" not in str(failure.value)
+
+
 def test_chat_history_is_bounded_and_newest_messages_remain(tmp_path):
     room = Room(tmp_path)
     room.activate(True)

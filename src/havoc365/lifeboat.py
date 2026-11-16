@@ -55,7 +55,11 @@ class Room:
                 "(id INTEGER PRIMARY KEY AUTOINCREMENT, author TEXT, body TEXT, created TEXT)"
             )
         if contacts is not None:
-            entries = read_json(contacts).get("contacts")
+            entries = read_json(
+                contacts,
+                recovery="Create or repair the contacts JSON file, "
+                "or omit --contacts to start without importing contacts.",
+            ).get("contacts")
             if (
                 not isinstance(entries, list)
                 or len(entries) > 1000
