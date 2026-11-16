@@ -194,7 +194,7 @@ Contacts can be edited in Admin without restarting. The optional `--contacts` JS
 
 ### Deployment recommendations
 
-Run the interactive wizard to choose one or more targets:
+Open the full-screen deployment planner:
 
 ```sh
 havoc365 lifeboat deploy
@@ -202,7 +202,9 @@ havoc365 lifeboat deploy
 
 By default it writes an offline plan, not infrastructure. Review the generated files, then use `--apply` and explicitly confirm `APPLY` to authorize installation and possible charges. Cloud credentials stay in their providers' normal local configuration, not the deployment JSON.
 
-The wizard accepts provider numbers or names, retries invalid fields and shows each target's role, URL and activation mode. Enter `q` at any prompt to cancel. To check a saved plan without installing anything:
+Choose a provider with the arrow keys and **Add** each target. Tab moves between controls; **Back** preserves your answers, and invalid fields show an inline error. Esc cancels without saving. The final **Save plan** screen reviews roles, hostnames and activation without starting deployment. The TUI needs an interactive terminal; scripts and redirected output use `--config` instead.
+
+To check a saved plan without installing anything:
 
 ```sh
 havoc365 lifeboat deploy --config deploy/generated/config.json --check

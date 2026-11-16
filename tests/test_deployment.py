@@ -287,55 +287,6 @@ def test_noninteractive_apply_requires_explicit_approval(config, tmp_path, monke
     assert deploy.run_deployment(arguments(tmp_path, config, "--apply", "--non-interactive")) == 1
 
 
-@pytest.mark.parametrize("probes", ["", "https://status.example.org/health"])
-def test_wizard_multiple_choices_and_shared_default(config, monkeypatch, capsys, probes):
-    responses = iter(
-        [
-            "aws,gcp,alibaba,ssh",
-            "",
-            config["ssh_key"],
-            config["ssh_cidr"],
-            "",
-            "",
-            "aws-node",
-            "aws.example.org",
-            "",
-            "eu-west-1",
-            "ami-123abc",
-            "",
-            "vpc-123abc",
-            "subnet-123abc",
-            "gcp-node",
-            "gcp.example.org",
-            "",
-            "test-project",
-            "us-central1",
-            "us-central1-a",
-            "",
-            "",
-            "ali-node",
-            "ali.example.org",
-            "",
-            "eu-central-1",
-            "eu-central-1a",
-            "ubuntu_24_04",
-            "",
-            "ssh-node",
-            "ssh.example.org",
-            "",
-            "",
-            "192.0.2.1",
-            probes,
-        ]
-    )
-    monkeypatch.setattr("builtins.input", lambda prompt: next(responses))
-    value = deploy.validate_config(deploy.wizard())
-    assert value["topology"] == "shared"
-    assert [t["provider"] for t in value["targets"]] == ["aws", "gcp", "alibaba", "ssh"]
-    assert value["watch"]["urls"] == ([probes] if probes else [])
-    assert ("NOT be automatic" if not probes else "supervised watcher") in capsys.readouterr().out
-
-
 @pytest.mark.parametrize("topology", ["shared", "independent"])
 def test_supervised_watcher_only_runs_on_authorities(config, tmp_path, topology):
     probes = ["https://service.example.org/health", "https://other.example.org:443/probe%2F$ready"]
@@ -402,14 +353,6 @@ def test_bad_watch_configuration_fails_before_commands(config, tmp_path, monkeyp
     with pytest.raises(HavocError):
         deploy.run_deployment(arguments(tmp_path, config, "--apply", "--confirm", "APPLY"))
     assert not (tmp_path / "output").exists()
-
-
-def test_wizard_reprompts_unknown_provider_and_can_cancel(monkeypatch, capsys):
-    responses = iter(["azure", "q"])
-    monkeypatch.setattr("builtins.input", lambda prompt: next(responses))
-    with pytest.raises(KeyboardInterrupt):
-        deploy.wizard()
-    assert "Unknown target" in capsys.readouterr().out
 
 
 def test_command_failure_does_not_expose_provider_output(monkeypatch):
@@ -691,47 +634,6 @@ def test_cloud_check_only_plans_and_reports_deferred_host_checks(
     assert "1 create, 0 update" in text
     assert "PENDING" in text and "after VM allocation" in text
     assert "No infrastructure or hosts were changed" in text
-
-
-def test_wizard_corrects_invalid_fields_without_losing_answers(config, monkeypatch, capsys):
-    answers = iter(
-        [
-            "unknown",
-            "4",
-            "typo",
-            "",
-            "/missing/key",
-            config["ssh_key"],
-            "0.0.0.0/0",
-            config["ssh_cidr"],
-            "http://wrong.example.org",
-            "",
-            "main;command",
-            "",
-            "../bad",
-            "",
-            "https://wrong.example.org",
-            "room.example.org",
-            "-bad-user",
-            "",
-            "70000",
-            "2222",
-            "host;command",
-            "192.0.2.1",
-            "http://wrong.example.org",
-            "",
-        ]
-    )
-    monkeypatch.setattr("builtins.input", lambda prompt: next(answers))
-    monkeypatch.setattr(
-        deploy.subprocess, "run", lambda *a, **kw: pytest.fail("Wizard must stay offline")
-    )
-    clean = deploy.validate_config(deploy.wizard())
-    assert clean["targets"][0]["ssh_port"] == 2222
-    assert clean["targets"][0]["hostname"] == "room.example.org"
-    assert clean["repository"] == deploy.DEFAULT_REPOSITORY
-    assert clean["watch"]["urls"] == []
-    assert capsys.readouterr().out.count("Try again:") == 12
 
 
 def test_new_vm_host_failure_stops_further_allocation(config, tmp_path, monkeypatch):

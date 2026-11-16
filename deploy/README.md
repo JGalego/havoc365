@@ -1,8 +1,12 @@
 # Deploy a Lifeboat
 
-Run `havoc365 lifeboat deploy` for the interactive wizard. Choose AWS, GCP, Alibaba Cloud or existing Linux cloud/on-prem SSH hosts. Select multiple providers, or repeat a provider to create multiple nodes.
+Run `havoc365 lifeboat deploy` for the full-screen planner. Choose AWS, GCP, Alibaba Cloud or existing Linux cloud/on-prem SSH hosts. Add multiple providers, or repeat a provider to create multiple nodes.
 
-Choose providers by number or name. Enter keeps a default; `q` cancels. Invalid fields are retried without discarding earlier answers. The review lists each target's provider, authority/gateway role, URL and automatic/manual activation. Redirected output stays plain text, and `NO_COLOR` is respected.
+Use arrow keys and Enter in provider/layout selectors, **Add** to queue a target, and **Remove** to drop the highlighted target. The first target owns the database in shared mode. Tab and Shift+Tab move between controls; **Back**/**Next** or Alt+Left/Alt+Right navigate the forms without losing answers. Invalid fields show an inline error. Source options are collapsed by default. Esc closes an open selector, otherwise cancels without writing a plan; Ctrl+Q or **Cancel** also exits.
+
+The review lists each target's provider, authority/gateway role, hostname and automatic/manual activation. **Save plan** returns to the shell and writes the local plan; it never starts deployment by itself. The full-screen app restores the terminal when it exits. Use at least a 60-column, 20-row terminal; long forms scroll while navigation stays visible. `NO_COLOR` is respected.
+
+Saved `--config` commands bypass the TUI and keep plain output when redirected. A missing interactive input/output terminal or `TERM=dumb` requires `--config`; the planner never starts a broken screen or falls back to another prompt sequence.
 
 See [architectures as code](architectures.md) for Mermaid diagrams of all four targets, a mixed shared-authority deployment and independent rooms.
 
@@ -134,7 +138,7 @@ havoc365 lifeboat auto --url https://lifeboat.example.org
 
 ### Automatic activation
 
-Supply `watch: {"urls": ["https://your-required-service.example.org/health"]}` in a saved config, or enter probe URLs at the wizard prompt. After HTTPS verification, bootstrap installs and enables `havoc365-watch.service` on the authority, restarts it automatically on failure, and starts it on boot. Shared deployments install exactly one watcher on the primary, never on gateways; independent deployments install one on each room's authority. It reuses the host's private recovery environment and keeps watcher state separately in `/var/lib/havoc365-watch`. No SMS, roster, paid delivery or third-party credentials are configured by deployment.
+Supply `watch: {"urls": ["https://your-required-service.example.org/health"]}` in a saved config, or enter probe URLs on the planner's Activation screen. After HTTPS verification, bootstrap installs and enables `havoc365-watch.service` on the authority, restarts it automatically on failure, and starts it on boot. Shared deployments install exactly one watcher on the primary, never on gateways; independent deployments install one on each room's authority. It reuses the host's private recovery environment and keeps watcher state separately in `/var/lib/havoc365-watch`. No SMS, roster, paid delivery or third-party credentials are configured by deployment.
 
 Probe targets must be explicit public HTTPS URLs on port 443, without embedded credentials, query strings, fragments, whitespace or malformed escapes; public health paths are allowed. The watcher only probes these URLs, not an implicit Microsoft or DNS service inventory, and makes no tenant/authentication calls. Its existing default interval and failure threshold apply. An empty or omitted `watch.urls` is **manual-only**, not automatic activation; reapplying that configuration disables any previously deployment-managed watcher. Check `systemctl status havoc365-watch` and `journalctl -u havoc365-watch` privately to confirm it is running.
 

@@ -12,7 +12,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
-from collections.abc import Callable, Collection
+from collections.abc import Collection
 from importlib.resources import files
 from pathlib import Path
 from string import Template
@@ -49,7 +49,7 @@ def configure_parser(boats: argparse._SubParsersAction) -> None:
         help="Plan, check or install Lifeboat on cloud VMs or SSH hosts",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
-            "Default: guided offline plan; q cancels any wizard prompt.\n"
+            "Default: full-screen offline planner; Esc cancels without saving.\n"
             "  --config deploy/generated/config.json --check\n"
             "      Read-only SSH checks and cloud planning; no installation.\n"
             "  --config deploy/generated/config.json --apply\n"
@@ -82,126 +82,10 @@ def configure_parser(boats: argparse._SubParsersAction) -> None:
     )
 
 
-def _ask(prompt: str, default: str = "", *, check: Callable[[str], object] | None = None) -> str:
-    while True:
-        value = input(f"{prompt}{f' [{default}]' if default else ''}: ").strip() or default
-        if value.casefold() in {"q", "quit"}:
-            raise KeyboardInterrupt
-        try:
-            if check:
-                check(value)
-            return value
-        except HavocError as error:
-            print(f"Try again: {error}")
-
-
-def _providers(value: str) -> list[str]:
-    choices = {str(index): provider for index, provider in enumerate(PROVIDERS, 1)}
-    selected = [choices.get(item, item) for item in re.split(r"[,\s]+", value.lower())]
-    if not 1 <= len(selected) <= 20 or any(item not in PROVIDERS for item in selected):
-        raise HavocError(
-            "Unknown target. Choose 1-4 or aws, gcp, alibaba, ssh; separate with commas."
-        )
-    return selected
-
-
 def wizard() -> dict:
-    ui = UI()
-    ui.table(
-        "Lifeboat deployment / 1. Targets",
-        ("Choice", "Provider", "Uses"),
-        [
-            ("1", "AWS", "Dedicated EC2 VM"),
-            ("2", "GCP", "Dedicated Compute Engine VM"),
-            ("3", "Alibaba Cloud", "Dedicated ECS VM"),
-            ("4", "SSH", "Existing cloud/on-prem Ubuntu host"),
-        ],
-    )
-    print("Targets: AWS, GCP, Alibaba Cloud, existing Linux cloud/on-prem SSH hosts.")
-    print("Use dedicated Ubuntu 24.04 hosts with passwordless sudo and persistent storage.")
-    print("Offline plan by default. Enter q to cancel; Enter keeps the displayed default.")
-    selected = _providers(
-        _ask(
-            "Targets (numbers or names; repeat a provider for more nodes)", "ssh", check=_providers
-        )
-    )
+    from havoc365.deploy_tui import run_wizard
 
-    def topology_choice(value: str) -> None:
-        if value.lower() not in ("shared", "independent"):
-            raise HavocError("Choose shared or independent.")
-
-    topology = _ask("Topology (shared / independent)", "shared", check=topology_choice).lower()
-    print(
-        "Shared: first target owns the only SQLite database; others are HTTPS gateways. "
-        "Primary outage stops all rooms; this is NOT replication or HA."
-        if topology == "shared"
-        else "Independent: each target owns its people, invitations, messages and recovery keys."
-    )
-
-    def key_check(value: str) -> None:
-        path = _key_path(value)
-        if any(provider != "ssh" for provider in selected):
-            _public_key(path)
-
-    ui.message("\n2. Access and source")
-    key = _ask("Local SSH private key path", "~/.ssh/id_ed25519", check=key_check)
-    cidr = _ask("Your SSH access CIDR (IPv4, e.g. 203.0.113.10/32)", check=_cidr)
-    repository = _ask("Public HTTPS Git repository", DEFAULT_REPOSITORY, check=_repository)
-    ref = _ask("Git ref (main is mutable; prefer a reviewed commit SHA)", "main", check=_ref)
-    targets = []
-    names: set[str] = set()
-    hostnames: set[str] = set()
-    endpoints: set[tuple[str, int]] = set()
-    for index, provider in enumerate(selected, 1):
-        ui.message(f"\n3. Target {index}/{len(selected)} / {provider}")
-        target = {"provider": provider, **DEFAULTS[provider]}
-        target["name"] = _ask(
-            f"Target {index} name", f"lifeboat-{index}", check=lambda value: _name(value, names)
-        )
-        names.add(target["name"])
-        target["hostname"] = _ask(
-            "Public DNS hostname (no scheme)",
-            check=lambda value: _hostname(value, "Public hostname", used=hostnames),
-        )
-        hostnames.add(target["hostname"])
-        target["ssh_user"] = _ask(
-            "SSH user", "root" if provider == "alibaba" else "ubuntu", check=_user
-        )
-        if provider == "ssh":
-            target["ssh_port"] = int(_ask("SSH port", "22", check=_port))
-        port = target.get("ssh_port", 22)
-        for field in FIELDS[provider]:
-            target[field] = _ask(
-                f"{provider} {field}",
-                target.get(field, ""),
-                check=lambda value, field=field, provider=provider, port=port: _field(
-                    value, field, provider, port=port, endpoints=endpoints
-                ),
-            )
-        if provider == "ssh":
-            endpoints.add((target["host"], port))
-        targets.append(target)
-    ui.message("\n4. Activation")
-    urls = _ask(
-        "HTTPS probe URLs (space-separated; blank = manual-only, NOT automatic)",
-        check=lambda value: _watch_config({"urls": value.split()}),
-    ).split()
-    print(
-        "Install a supervised watcher on each authority; no SMS or invite delivery. "
-        "A separate monitoring machine avoids sharing the authority's failure domain."
-        if urls
-        else "Manual-only: no watcher will be installed; activation will NOT be automatic."
-    )
-    return {
-        "version": 1,
-        "topology": topology,
-        "repository": repository,
-        "ref": ref,
-        "ssh_key": key,
-        "ssh_cidr": cidr,
-        "targets": targets,
-        "watch": {"urls": urls},
-    }
+    return run_wizard()
 
 
 def _hostname(value: object, label: str, *, public: bool = True, used: Collection[str] = ()) -> str:
@@ -899,50 +783,63 @@ def run_deployment(args: argparse.Namespace) -> int:
                 raise HavocError(
                     "Cannot read deployment JSON. Check --config and deploy/README.md."
                 ) from error
-        elif args.non_interactive or not sys.stdin.isatty():
+        elif (
+            args.non_interactive
+            or not sys.stdin.isatty()
+            or not sys.stdout.isatty()
+            or os.environ.get("TERM") == "dumb"
+        ):
             raise HavocError(
-                "Noninteractive deployment requires --config PATH; default is offline --plan."
+                "Noninteractive deployment requires --config PATH; default is offline --plan. "
+                "The full-screen planner needs an interactive input/output terminal."
             )
         else:
             raw = wizard()
         config = validate_config(raw)
         render(config, args.output, args.assets)
-        UI().table(
-            "Deployment review",
-            ("Target", "Provider / role", "URL / activation"),
-            [
-                (
-                    target["name"],
-                    target["provider"]
-                    + (
-                        " / gateway" if config["topology"] == "shared" and index else " / authority"
-                    ),
-                    f"https://{target['hostname']} / "
-                    + (
-                        "forwarded"
-                        if config["topology"] == "shared" and index
-                        else "automatic"
-                        if config["watch"]["urls"]
-                        else "manual"
-                    ),
-                )
-                for index, target in enumerate(config["targets"])
-            ],
-        )
+        if args.config:
+            UI().table(
+                "Deployment review",
+                ("Target", "Provider / role", "URL / activation"),
+                [
+                    (
+                        target["name"],
+                        target["provider"]
+                        + (
+                            " / gateway"
+                            if config["topology"] == "shared" and index
+                            else " / authority"
+                        ),
+                        f"https://{target['hostname']} / "
+                        + (
+                            "forwarded"
+                            if config["topology"] == "shared" and index
+                            else "automatic"
+                            if config["watch"]["urls"]
+                            else "manual"
+                        ),
+                    )
+                    for index, target in enumerate(config["targets"])
+                ],
+            )
         print(f"Saved private, credential-free plan: {args.output / 'config.json'}")
-        print(f"Bootstrap ref: {config['ref']} (main/branches are mutable, not reproducible pins).")
-        print(
-            "Shared state: first target is the only authority; others are gateways. "
-            "Primary is a SPOF. No replication, automatic failover or cross-domain SSO."
-            if config["topology"] == "shared"
-            else "Independent rooms: separate databases, people, invites and recovery credentials."
-        )
-        print(
-            "Automatic activation: supervised HTTPS watcher on each authority (not gateways); "
-            "manual holds override it. No SMS or invite delivery is enabled."
-            if config["watch"]["urls"]
-            else "Manual-only: no probe URLs or installed watcher; activation is NOT automatic."
-        )
+        if args.config:
+            print(
+                f"Bootstrap ref: {config['ref']} "
+                "(main/branches are mutable, not reproducible pins)."
+            )
+            print(
+                "Shared state: first target is the only authority; others are gateways. "
+                "Primary is a SPOF. No replication, automatic failover or cross-domain SSO."
+                if config["topology"] == "shared"
+                else "Independent rooms: separate databases, people, invites and recovery keys."
+            )
+            print(
+                "Automatic activation: supervised HTTPS watcher on each authority (not gateways); "
+                "manual holds override it. No SMS or invite delivery is enabled."
+                if config["watch"]["urls"]
+                else "Manual-only: no probe URLs or installed watcher; activation is NOT automatic."
+            )
         if not args.apply and not args.check:
             print("Plan only: no cloud/SSH commands ran. Review files and deploy/README.md first.")
             command = shlex.join(
