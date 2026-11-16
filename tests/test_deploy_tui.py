@@ -25,19 +25,31 @@ def fill(app, **values):
         app.query_one(f"#field-{name}", Input).value = str(value)
 
 
+async def choose(app, pilot, provider):
+    app.query_one("#provider", Select).value = provider
+    await pilot.pause()
+
+
 @pytest.mark.parametrize("size", [(80, 24), (60, 20)])
 def test_provider_screen_fits_and_keyboard_selection_is_editable(size):
     async def exercise():
         app = DeploymentApp()
         async with app.run_test(size=size) as pilot:
-            await pilot.press("enter", "home", "enter", "tab", "enter")
+            await pilot.press("enter", "home", "down", "enter")
             await pilot.pause()
             assert [target["provider"] for target in app.targets] == ["aws"]
-            await pilot.pause(0.4)
-            await pilot.press("enter")
+            await pilot.press("enter", "home", "down", "enter")
             assert [target["provider"] for target in app.targets] == ["aws", "aws"]
-            await pilot.click("#remove-target")
+            assert [target["name"] for target in app.targets] == ["aws-1", "aws-2"]
+            picker = app.query_one("#provider", Select)
+            body = app.query_one("#body")
+            assert picker.region.bottom <= body.content_region.bottom
+            assert picker.region.y >= body.content_region.y
+            app.query_one("#remove-0").scroll_visible(animate=False)
+            await pilot.pause()
+            await pilot.click("#remove-0")
             assert len(app.targets) == 1
+            assert app.targets[0]["name"] == "aws-2"
             assert app.query_one("#next").region.bottom <= size[1] - 1
             assert app.query_one("#navigation").region.right <= size[0]
             assert app.query_one("#provider").region.right <= size[0]
@@ -72,9 +84,7 @@ def test_complete_multicloud_plan_with_back_navigation_and_no_network(key, monke
         app = DeploymentApp()
         async with app.run_test(size=(80, 24)) as pilot:
             for provider in ("aws", "gcp", "alibaba", "ssh", "ssh"):
-                app.query_one("#provider", Select).value = provider
-                await pilot.pause(0.4)
-                await pilot.click("#add-target")
+                await choose(app, pilot, provider)
             app.query_one("#topology", Select).value = topology
             await pilot.pause()
             await pilot.press("alt+right")
@@ -135,8 +145,8 @@ def test_invalid_fields_preserve_drafts_and_reveal_advanced_source(key):
         async with app.run_test() as pilot:
             await pilot.press("alt+right")
             assert app.page == 0
-            assert "Add at least" in str(app.query_one("#error", Static).render())
-            await pilot.click("#add-target")
+            assert "Choose at least" in str(app.query_one("#error", Static).render())
+            await choose(app, pilot, "ssh")
             await pilot.press("alt+right")
             await pilot.pause()
             assert app.query_one("#body").scroll_y == 0
@@ -172,9 +182,8 @@ def test_duplicate_ssh_target_is_rejected_inline(key):
     async def exercise():
         app = DeploymentApp()
         async with app.run_test() as pilot:
-            await pilot.click("#add-target")
-            await pilot.pause(0.4)
-            await pilot.click("#add-target")
+            await choose(app, pilot, "ssh")
+            await choose(app, pilot, "ssh")
             await pilot.press("alt+right")
             fill(app, ssh_key=key, ssh_cidr="203.0.113.1/32")
             await pilot.press("alt+right")
@@ -191,6 +200,148 @@ def test_duplicate_ssh_target_is_rejected_inline(key):
             fill(app, ssh_port="2222")
             await pilot.press("alt+right")
             assert app.page == 4
+            await pilot.press("escape")
+
+    asyncio.run(exercise())
+
+
+def test_target_names_roles_and_removal_stay_in_sync():
+    async def exercise():
+        app = DeploymentApp()
+        async with app.run_test(size=(80, 24)) as pilot:
+            await choose(app, pilot, "aws")
+            app.query_one("#target-name-0", Input).value = "europe"
+            await choose(app, pilot, "aws")
+            app.query_one("#target-name-1", Input).value = "america"
+            app.targets[1]["region"] = "us-east-1"
+            await choose(app, pilot, "ssh")
+            assert [target["name"] for target in app.targets] == ["europe", "america", "ssh-1"]
+            assert "Authority" in str(app.query_one("#role-0", Static).render())
+            assert "Gateway" in str(app.query_one("#role-1", Static).render())
+            app.query_one("#remove-0").scroll_visible(animate=False)
+            await pilot.pause()
+            await pilot.click("#remove-0")
+            assert [target["name"] for target in app.targets] == ["america", "ssh-1"]
+            assert app.targets[0]["region"] == "us-east-1"
+            assert app.query_one("#target-name-1", Input).value == "america"
+            assert "Authority" in str(app.query_one("#role-1", Static).render())
+            app.query_one("#topology", Select).value = "independent"
+            await pilot.pause()
+            assert "Authority" in str(app.query_one("#role-2", Static).render())
+            assert "2 authorities" in str(app.query_one("#fleet-summary", Static).render())
+            await choose(app, pilot, "aws")
+            assert len({target["name"] for target in app.targets}) == 3
+            assert app.targets[0]["name"] == "america"
+            await pilot.press("escape")
+
+    asyncio.run(exercise())
+
+
+def test_duplicate_target_names_are_flagged_before_leaving_selection():
+    async def exercise():
+        app = DeploymentApp()
+        async with app.run_test() as pilot:
+            await choose(app, pilot, "gcp")
+            await choose(app, pilot, "gcp")
+            app.query_one("#target-name-1", Input).value = "gcp-1"
+            await pilot.press("alt+right")
+            assert app.page == 0
+            assert app.focused.id == "target-name-1"
+            assert "unique" in str(app.query_one("#error", Static).render())
+            app.query_one("#target-name-1", Input).value = "backup"
+            await pilot.press("alt+right")
+            assert app.page == 1
+            await pilot.press("escape")
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("topology", ["shared", "independent"])
+def test_repeated_aws_targets_render_separate_regions_and_state(
+    key, tmp_path, monkeypatch, topology
+):
+    monkeypatch.setattr(
+        deployment, "_command", lambda *a, **kw: pytest.fail("Planner must stay offline")
+    )
+
+    async def exercise():
+        app = DeploymentApp()
+        async with app.run_test(size=(80, 24)) as pilot:
+            await choose(app, pilot, "aws")
+            await choose(app, pilot, "aws")
+            app.query_one("#topology", Select).value = topology
+            await pilot.pause()
+            await pilot.press("alt+right")
+            fill(app, ssh_key=key, ssh_cidr="203.0.113.1/32")
+            await pilot.press("alt+right")
+            for name, region, resource in (
+                ("aws-1", "eu-west-1", "123abc"),
+                ("aws-2", "us-east-1", "456def"),
+            ):
+                assert app.query_one("#field-name", Input).value == name
+                fill(
+                    app,
+                    hostname=f"{name}.example.org",
+                    region=region,
+                    image=f"ami-{resource}",
+                    vpc_id=f"vpc-{resource}",
+                    subnet_id=f"subnet-{resource}",
+                )
+                await pilot.press("alt+right")
+            await pilot.press("alt+right")
+            await pilot.click("#next")
+        return app.return_value
+
+    config = asyncio.run(exercise())
+    output = tmp_path / "plan"
+    deployment.render(config, output)
+    for name, region, role in (
+        ("aws-1", "eu-west-1", "primary"),
+        ("aws-2", "us-east-1", "gateway" if topology == "shared" else "primary"),
+    ):
+        directory = output / name
+        assert json.loads((directory / "terraform.tfvars.json").read_text())["region"] == region
+        assert json.loads((directory / "deployment.json").read_text())["role"] == role
+        assert (directory / "main.tf").is_file()
+    assert len({target["name"] for target in config["targets"]}) == 2
+
+
+def test_twenty_targets_keep_navigation_visible_and_reopen_empty_row_after_removal():
+    async def exercise():
+        app = DeploymentApp()
+        async with app.run_test(size=(60, 20)) as pilot:
+            for _ in range(20):
+                await choose(app, pilot, "ssh")
+                if len(app.targets) < 20:
+                    picker = app.query_one("#provider", Select)
+                    assert picker.region.bottom <= app.query_one("#body").content_region.bottom
+            assert app.query_one("#provider", Select).disabled
+            assert len(app.targets) == len({target["name"] for target in app.targets}) == 20
+            assert app.query_one("#next").region.bottom <= 19
+            app.query_one("#remove-19").scroll_visible(animate=False)
+            await pilot.pause()
+            await pilot.click("#remove-19")
+            assert len(app.targets) == 19
+            assert not app.query_one("#provider", Select).disabled
+            await choose(app, pilot, "ssh")
+            assert len(app.targets) == len({target["name"] for target in app.targets}) == 20
+            await pilot.press("escape")
+
+    asyncio.run(exercise())
+
+
+def test_resizing_keeps_the_fresh_destination_picker_visible():
+    async def exercise():
+        app = DeploymentApp()
+        async with app.run_test(size=(80, 24)) as pilot:
+            await choose(app, pilot, "aws")
+            await choose(app, pilot, "aws")
+            await pilot.resize_terminal(60, 20)
+            await pilot.pause()
+            picker = app.query_one("#provider", Select)
+            body = app.query_one("#body")
+            assert picker.region.bottom <= body.content_region.bottom
+            assert picker.region.y >= body.content_region.y
             await pilot.press("escape")
 
     asyncio.run(exercise())

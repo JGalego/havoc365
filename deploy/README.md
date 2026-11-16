@@ -2,7 +2,11 @@
 
 Run `havoc365 lifeboat deploy` for the full-screen planner. Choose AWS, GCP, Alibaba Cloud or existing Linux cloud/on-prem SSH hosts. Add multiple providers, or repeat a provider to create multiple nodes.
 
-Use arrow keys and Enter in provider/layout selectors, **Add** to queue a target, and **Remove** to drop the highlighted target. The first target owns the database in shared mode. Tab and Shift+Tab move between controls; **Back**/**Next** or Alt+Left/Alt+Right navigate the forms without losing answers. Invalid fields show an inline error. Source options are collapsed by default. Esc closes an open selector, otherwise cancels without writing a plan; Ctrl+Q or **Cancel** also exits.
+Use arrow keys and Enter in the empty provider selector. Selecting a provider immediately creates a named target and another empty selector; there is no Add step. Repeat a provider for additional hosts. Rename targets in their rows and use that row's **x** to remove it. Names must be unique; removing a row preserves the other targets' names and settings. The live role labels and target counts follow the chosen room layout. The first remaining target owns the database in shared mode; changing which target comes first changes the planned authority.
+
+Two AWS targets become `aws-1` and `aws-2` by default, with separate region, image, VM size, network, hostname and provider-state directories. Other providers work the same way: each target gets its own Hosts form. In shared mode, the second is a gateway to the first, not another database replica. In independent mode, both own separate rooms. Each needs a unique public hostname; existing SSH targets must also use distinct host/port pairs.
+
+Tab and Shift+Tab move between controls; **Back**/**Next** or Alt+Left/Alt+Right navigate the forms without losing answers. The progress strip tracks Targets, Access, Hosts, Activation and Review. Invalid fields show an inline error. Source options are collapsed by default. Esc closes an open selector, otherwise cancels without writing a plan; Ctrl+Q or **Cancel** also exits.
 
 The review lists each target's provider, authority/gateway role, hostname and automatic/manual activation. **Save plan** returns to the shell and writes the local plan; it never starts deployment by itself. The full-screen app restores the terminal when it exits. Use at least a 60-column, 20-row terminal; long forms scroll while navigation stays visible. `NO_COLOR` is respected.
 

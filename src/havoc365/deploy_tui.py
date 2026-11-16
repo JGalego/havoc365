@@ -10,8 +10,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widget import Widget
-from textual.widgets import Button, Collapsible, Footer, Input, Label, OptionList, Select, Static
-from textual.widgets.option_list import Option
+from textual.widgets import Button, Collapsible, Footer, Input, Label, Select, Static
 
 from havoc365 import deployment as deploy
 from havoc365.errors import HavocError
@@ -22,6 +21,8 @@ PROVIDER_LABELS = {
     "alibaba": "Alibaba Cloud / ECS",
     "ssh": "Existing host / SSH",
 }
+PROVIDER_NAMES = {"aws": "AWS", "gcp": "GCP", "alibaba": "Alibaba Cloud", "ssh": "SSH"}
+PROVIDER_COLORS = {"aws": "#ffbe6f", "gcp": "#92c5ff", "alibaba": "#ff9f70", "ssh": "#80d9bf"}
 LABELS = {
     "name": "Target name",
     "hostname": "Public hostname",
@@ -36,6 +37,18 @@ LABELS = {
     "vpc_id": "VPC ID",
     "subnet_id": "Public subnet ID",
 }
+
+
+class FormBody(VerticalScroll):
+    def reveal(self, control: Widget) -> None:
+        if self in control.ancestors:
+            self.call_after_refresh(
+                self.scroll_to_widget, control, animate=False, immediate=True, origin_visible=False
+            )
+
+    def on_resize(self) -> None:
+        if self.app.focused:
+            self.reveal(self.app.focused)
 
 
 class DeploymentApp(App[dict]):
@@ -58,12 +71,14 @@ class DeploymentApp(App[dict]):
     Label { height: 1; }
     Input, Select { margin-bottom: 1; }
     Input.invalid { border: tall #ff8c82; }
-    #provider-row { height: 3; }
-    #provider { width: 1fr; margin-bottom: 0; }
-    #add-target { margin-left: 1; min-width: 8; width: 8; }
-    #targets-row { height: 4; }
-    #targets { height: 4; width: 1fr; border: solid #304154; }
-    #remove-target { margin-left: 1; min-width: 8; width: 10; }
+    #target-list { height: auto; }
+    .target-row { height: 3; margin-bottom: 1; background: #131e2b; }
+    .target-provider-name { width: 24%; min-width: 14; padding: 1 0 0 1; }
+    .target-name { width: 1fr; margin: 0 1; }
+    .target-role { width: 10; padding-top: 1; }
+    .target-remove { width: 3; min-width: 3; padding: 0; }
+    #provider { margin-bottom: 1; }
+    #fleet-summary { height: auto; margin-bottom: 1; color: #80d9bf; }
     #topology { margin-bottom: 0; }
     #topology-note { height: auto; color: #ffd18a; }
     Collapsible { padding: 0; margin-bottom: 1; }
@@ -81,6 +96,8 @@ class DeploymentApp(App[dict]):
         super().__init__()
         self.page = 0
         self.targets: list[dict[str, str]] = []
+        self.row_ids: list[int] = []
+        self.next_row_id = 0
         self.topology = "shared"
         self.settings = {
             "ssh_key": "~/.ssh/id_ed25519",
@@ -94,7 +111,7 @@ class DeploymentApp(App[dict]):
         with Vertical(id="frame"):
             yield Static("havoc365 / lifeboat   Offline planner", id="brand")
             yield Static(id="step")
-            yield VerticalScroll(id="body")
+            yield FormBody(id="body")
             yield Static("", id="error", markup=False)
             with Horizontal(id="navigation"):
                 yield Button("Cancel", id="cancel")
@@ -120,24 +137,10 @@ class DeploymentApp(App[dict]):
         self.query_one("#next", Button).label = "Save plan" if last else "Next"
         widgets = []
         if self.page == 0:
-            title = "Targets"
             widgets = [
                 Static("Where will Lifeboat run?", classes="heading"),
-                Horizontal(
-                    Select(
-                        [(label, provider) for provider, label in PROVIDER_LABELS.items()],
-                        value="ssh",
-                        allow_blank=False,
-                        id="provider",
-                    ),
-                    Button("Add", id="add-target"),
-                    id="provider-row",
-                ),
-                Horizontal(
-                    OptionList(*self.target_options(), id="targets", markup=False),
-                    Button("Remove", id="remove-target", disabled=not self.targets),
-                    id="targets-row",
-                ),
+                Vertical(*self.target_rows(), id="target-list"),
+                Static(self.fleet_summary(), id="fleet-summary"),
                 Label("Room layout"),
                 Select(
                     [("One shared room", "shared"), ("Separate rooms", "independent")],
@@ -148,7 +151,6 @@ class DeploymentApp(App[dict]):
                 Static(self.topology_note(), id="topology-note", markup=False),
             ]
         elif self.page == 1:
-            title = "Access"
             widgets = [
                 Static("How will you connect?", classes="heading"),
                 Static(
@@ -179,15 +181,20 @@ class DeploymentApp(App[dict]):
             index = self.page - 2
             target = self.targets[index]
             provider = target["provider"]
-            title = f"Target {index + 1} of {len(self.targets)} / {PROVIDER_LABELS[provider]}"
-            widgets = [Static("Configure this host", classes="heading")]
+            widgets = [
+                Static(f"Configure {target['name']}", classes="heading", markup=False),
+                Static(
+                    f"{PROVIDER_LABELS[provider]} / {self.target_role(index)}",
+                    classes="hint",
+                    markup=False,
+                ),
+            ]
             names = ["name", "hostname", *deploy.FIELDS[provider], "ssh_user"]
             if provider == "ssh":
                 names.append("ssh_port")
             for name in names:
                 widgets.extend(self.form_field(name, LABELS[name], target.get(name, "")))
         elif self.page == len(self.targets) + 2:
-            title = "Activation"
             widgets = [
                 Static("When should the room open?", classes="heading"),
                 *self.form_field("probes", "HTTPS probe URLs (space-separated)", self.probes),
@@ -199,7 +206,6 @@ class DeploymentApp(App[dict]):
                 Static("No SMS or invitations are sent by deployment.", classes="hint"),
             ]
         else:
-            title = "Review"
             config = self.config()
             table = Table(expand=True, box=None, padding=(0, 1))
             table.add_column("Target")
@@ -234,9 +240,7 @@ class DeploymentApp(App[dict]):
                     classes="hint",
                 ),
             ]
-        self.query_one("#step", Static).update(
-            f"{self.page + 1} / {len(self.targets) + 4}  {title}"
-        )
+        self.update_journey()
         await body.mount(*widgets)
         body.scroll_home(animate=False)
         focusable = body.query("Input, Select")
@@ -253,13 +257,108 @@ class DeploymentApp(App[dict]):
             else "Separate databases, people and invitations. No synchronization."
         )
 
-    def target_options(self) -> list[Option]:
-        return [
-            Option(f"{index}. {PROVIDER_LABELS[target['provider']]}")
-            for index, target in enumerate(self.targets, 1)
-        ] or [Option("No targets yet", disabled=True)]
+    def update_journey(self) -> None:
+        stage = (
+            0
+            if self.page == 0
+            else 1
+            if self.page == 1
+            else 2
+            if self.page < len(self.targets) + 2
+            else 3
+            if self.page == len(self.targets) + 2
+            else 4
+        )
+        journey = Text()
+        for index, label in enumerate(("Targets", "Access", "Hosts", "Activation", "Review")):
+            if index:
+                journey.append(" > ", style="#52677f")
+            journey.append(
+                label,
+                style="bold #92c5ff"
+                if index == stage
+                else "#80d9bf"
+                if index < stage
+                else "#718198",
+            )
+        if stage == 2:
+            journey.append(f"  {self.page - 1}/{len(self.targets)}", style="#92c5ff")
+        self.query_one("#step", Static).update(journey)
+
+    def target_role(self, index: int) -> str:
+        return "Gateway" if self.topology == "shared" and index > 0 else "Authority"
+
+    def fleet_summary(self) -> str:
+        count = len(self.targets)
+        if not count:
+            return "Choose a provider. A fresh row appears after each selection."
+        authorities = 1 if self.topology == "shared" else count
+        gateways = count - authorities
+        return (
+            f"{count} target{'s' if count != 1 else ''} / "
+            f"{authorities} authorit{'y' if authorities == 1 else 'ies'}"
+            + (f" / {gateways} gateway{'s' if gateways != 1 else ''}" if gateways else "")
+        )
+
+    def target_rows(self) -> list[Widget]:
+        rows: list[Widget] = [
+            self.target_row(index, row_id, target)
+            for index, (row_id, target) in enumerate(zip(self.row_ids, self.targets, strict=True))
+        ]
+        rows.append(
+            Select(
+                [(label, provider) for provider, label in PROVIDER_LABELS.items()],
+                prompt=(
+                    "20-target limit reached"
+                    if len(self.targets) == 20
+                    else "Choose another destination..."
+                    if self.targets
+                    else "Choose a destination..."
+                ),
+                id="provider",
+                disabled=len(self.targets) == 20,
+            )
+        )
+        return rows
+
+    def target_row(self, index: int, row_id: int, target: dict[str, str]) -> Horizontal:
+        provider = target["provider"]
+        return Horizontal(
+            Static(
+                Text(
+                    f"{index + 1:02} {PROVIDER_NAMES[provider]}",
+                    style=f"bold {PROVIDER_COLORS[provider]}",
+                ),
+                id=f"provider-label-{row_id}",
+                classes="target-provider-name",
+            ),
+            Input(
+                target["name"],
+                id=f"target-name-{row_id}",
+                classes="target-name",
+                max_length=40,
+                tooltip="Unique target name; host settings follow on the Hosts step",
+            ),
+            Static(
+                Text(self.target_role(index), style=PROVIDER_COLORS[provider]),
+                id=f"role-{row_id}",
+                classes="target-role",
+            ),
+            Button(
+                "x",
+                id=f"remove-{row_id}",
+                classes="target-remove",
+                tooltip=f"Remove {target['name']}",
+            ),
+            id=f"target-row-{row_id}",
+            classes="target-row",
+        )
 
     def collect(self) -> None:
+        if self.page == 0:
+            for row_id, target in zip(self.row_ids, self.targets, strict=True):
+                target["name"] = self.query_one(f"#target-name-{row_id}", Input).value.strip()
+            return
         values = {
             field.id.removeprefix("field-"): field.value.strip()
             for field in self.query("#body Input")
@@ -272,8 +371,10 @@ class DeploymentApp(App[dict]):
         elif self.page == len(self.targets) + 2:
             self.probes = values["probes"]
 
-    def check_field(self, name: str, check: Callable[[str], object]) -> None:
-        field = self.query_one(f"#field-{name}", Input)
+    def check_field(
+        self, name: str, check: Callable[[str], object], *, prefix: str = "field-"
+    ) -> None:
+        field = self.query_one(f"#{prefix}{name}", Input)
         try:
             check(field.value.strip())
         except (HavocError, OSError):
@@ -282,13 +383,19 @@ class DeploymentApp(App[dict]):
             for parent in field.ancestors:
                 if isinstance(parent, Collapsible):
                     parent.collapsed = False
-            field.scroll_visible(animate=False)
+            self.query_one("#body", FormBody).reveal(field)
             raise
 
     def validate_page(self) -> None:
         if self.page == 0:
             if not self.targets:
-                raise HavocError("Add at least one target.")
+                raise HavocError("Choose at least one destination.")
+            names: list[str] = []
+            for row_id, target in zip(self.row_ids, self.targets, strict=True):
+                self.check_field(
+                    str(row_id), lambda value: deploy._name(value, names), prefix="target-name-"
+                )
+                names.append(target["name"])
         elif self.page == 1:
             self.check_field("ssh_key", deploy._key_path)
             if any(target["provider"] != "ssh" for target in self.targets):
@@ -381,10 +488,43 @@ class DeploymentApp(App[dict]):
     def action_cancel(self) -> None:
         self.exit()
 
-    def on_select_changed(self, event: Select.Changed) -> None:
-        if self.page == 0 and event.select.id == "topology" and isinstance(event.value, str):
+    async def on_select_changed(self, event: Select.Changed) -> None:
+        if self.page != 0 or not isinstance(event.value, str):
+            return
+        if event.select.id == "topology":
             self.topology = event.value
             self.query_one("#topology-note", Static).update(self.topology_note())
+            self.refresh_targets()
+        elif event.select.id == "provider" and event.select is self.query_one("#provider"):
+            if len(self.targets) == 20:
+                self.query_one("#error", Static).update("At most 20 targets per plan.")
+                return
+            self.collect()
+            provider = event.value
+            names = {target["name"] for target in self.targets}
+            number = 1
+            while f"{provider}-{number}" in names:
+                number += 1
+            self.targets.append(
+                {
+                    "provider": provider,
+                    **deploy.DEFAULTS[provider],
+                    "name": f"{provider}-{number}",
+                    "ssh_user": "root" if provider == "alibaba" else "ubuntu",
+                    **({"ssh_port": "22"} if provider == "ssh" else {}),
+                }
+            )
+            row_id = self.next_row_id
+            self.row_ids.append(row_id)
+            self.next_row_id += 1
+            await self.query_one("#target-list", Vertical).mount(
+                self.target_row(len(self.targets) - 1, row_id, self.targets[-1]),
+                before=event.select,
+            )
+            with event.select.prevent(Select.Changed):
+                event.select.value = Select.NULL
+            self.refresh_targets()
+            self.focus_destination()
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         match event.button.id:
@@ -394,36 +534,48 @@ class DeploymentApp(App[dict]):
                 await self.action_back()
             case "cancel":
                 self.action_cancel()
-            case "add-target":
-                if len(self.targets) == 20:
-                    self.query_one("#error", Static).update("At most 20 targets per plan.")
-                    return
-                provider = self.query_one("#provider", Select).value
-                if isinstance(provider, str):
-                    self.targets.append(
-                        {
-                            "provider": provider,
-                            **deploy.DEFAULTS[provider],
-                            "name": f"lifeboat-{len(self.targets) + 1}",
-                            "ssh_user": "root" if provider == "alibaba" else "ubuntu",
-                            **({"ssh_port": "22"} if provider == "ssh" else {}),
-                        }
-                    )
+            case button_id if button_id and button_id.startswith("remove-"):
+                row_id = int(button_id.removeprefix("remove-"))
+                if row_id in self.row_ids:
+                    self.collect()
+                    index = self.row_ids.index(row_id)
+                    self.targets.pop(index)
+                    self.row_ids.pop(index)
+                    await self.query_one(f"#target-row-{row_id}").remove()
                     self.refresh_targets()
-            case "remove-target":
-                selected = self.query_one("#targets", OptionList).highlighted
-                if selected is not None:
-                    self.targets.pop(selected)
-                    self.refresh_targets()
+                    self.focus_destination()
 
     def refresh_targets(self) -> None:
-        options = self.query_one("#targets", OptionList)
-        options.clear_options()
-        options.add_options(self.target_options())
-        options.highlighted = len(self.targets) - 1 if self.targets else None
-        self.query_one("#remove-target", Button).disabled = not self.targets
+        for index, (row_id, target) in enumerate(zip(self.row_ids, self.targets, strict=True)):
+            provider = target["provider"]
+            self.query_one(f"#provider-label-{row_id}", Static).update(
+                Text(
+                    f"{index + 1:02} {PROVIDER_NAMES[provider]}",
+                    style=f"bold {PROVIDER_COLORS[provider]}",
+                )
+            )
+            self.query_one(f"#role-{row_id}", Static).update(
+                Text(self.target_role(index), style=PROVIDER_COLORS[provider])
+            )
+        selector = self.query_one("#provider", Select)
+        selector.disabled = len(self.targets) == 20
+        selector.prompt = (
+            "20-target limit reached"
+            if len(self.targets) == 20
+            else "Choose another destination..."
+            if self.targets
+            else "Choose a destination..."
+        )
+        self.query_one("#fleet-summary", Static).update(self.fleet_summary())
         self.query_one("#error", Static).update("")
-        self.query_one("#step", Static).update(f"1 / {len(self.targets) + 4}  Targets")
+
+    def focus_destination(self) -> None:
+        if len(self.targets) < 20:
+            control: Widget = self.query_one("#provider", Select)
+        else:
+            control = self.query_one("#next", Button)
+        control.focus(scroll_visible=False)
+        self.query_one("#body", FormBody).reveal(control)
 
     def on_input_changed(self, event: Input.Changed) -> None:
         event.input.remove_class("invalid")

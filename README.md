@@ -202,7 +202,9 @@ havoc365 lifeboat deploy
 
 By default it writes an offline plan, not infrastructure. Review the generated files, then use `--apply` and explicitly confirm `APPLY` to authorize installation and possible charges. Cloud credentials stay in their providers' normal local configuration, not the deployment JSON.
 
-Choose a provider with the arrow keys and **Add** each target. Tab moves between controls; **Back** preserves your answers, and invalid fields show an inline error. Esc cancels without saving. The final **Save plan** screen reviews roles, hostnames and activation without starting deployment. The TUI needs an interactive terminal; scripts and redirected output use `--config` instead.
+Choosing a provider creates a named target and a new empty row—no Add button. Choose the same provider again for another host: `aws-1` and `aws-2`, for example, have separate regions, VM settings, hostnames and deployment state. Rename targets in place; the planner shows which is the authority and which are gateways. In shared mode, two AWS targets are one authority and one gateway, not database replicas. In independent mode, each runs its own room.
+
+Tab moves between controls; **Back** preserves your answers, and invalid fields show an inline error. Esc cancels without saving. The final **Save plan** screen reviews roles, hostnames and activation without starting deployment. The TUI needs an interactive terminal; scripts and redirected output use `--config` instead.
 
 To check a saved plan without installing anything:
 
