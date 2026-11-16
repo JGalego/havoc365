@@ -1,0 +1,12 @@
+$hostname {
+	# Check the browser's original Origin BEFORE rewriting it for the authority.
+	@foreign expression `{http.request.header.Origin} != "" && {http.request.header.Origin} != "$origin"`
+	respond @foreign "Origin denied" 403
+	reverse_proxy $upstream {
+		header_up Host $upstream_host
+		header_up Origin $upstream
+		header_up -Forwarded
+		header_up -X-Forwarded-Host
+		header_up -X-Forwarded-Proto
+	}
+}

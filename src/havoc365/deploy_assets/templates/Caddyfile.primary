@@ -1,0 +1,5 @@
+$hostname {
+	@foreign expression `{http.request.header.Origin} != "" && {http.request.header.Origin} != "$origin"`
+	respond @foreign "Origin denied" 403
+	reverse_proxy 127.0.0.1:8080
+}

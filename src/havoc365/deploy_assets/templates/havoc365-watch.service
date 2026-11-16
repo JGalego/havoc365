@@ -1,0 +1,27 @@
+[Unit]
+Description=havoc365 explicit HTTPS outage watcher (no SMS)
+After=network-online.target havoc365.service caddy.service
+Wants=network-online.target havoc365.service caddy.service
+
+[Service]
+Type=simple
+User=havoc365
+Group=havoc365
+StateDirectory=havoc365-watch
+StateDirectoryMode=0700
+WorkingDirectory=/var/lib/havoc365-watch
+Environment=XDG_STATE_HOME=/var/lib/havoc365-watch
+EnvironmentFile=/etc/havoc365/lifeboat.env
+ExecStart=$exec_start
+Restart=always
+RestartSec=10
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/havoc365-watch
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

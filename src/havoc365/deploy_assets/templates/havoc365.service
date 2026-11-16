@@ -1,0 +1,26 @@
+[Unit]
+Description=havoc365 Lifeboat (single SQLite authority)
+After=network-online.target
+Wants=network-online.target
+RequiresMountsFor=/var/lib/havoc365
+
+[Service]
+Type=simple
+User=havoc365
+Group=havoc365
+WorkingDirectory=/var/lib/havoc365
+Environment=XDG_STATE_HOME=/var/lib/havoc365
+EnvironmentFile=/etc/havoc365/lifeboat.env
+ExecStart=/opt/havoc365/runtime/bin/havoc365 lifeboat serve --port 8080
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/havoc365
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
